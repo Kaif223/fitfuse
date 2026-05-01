@@ -1,0 +1,56 @@
+{
+  "expo": {
+    "name": "FitFuse",
+    "slug": "fitfuse",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "scheme": "fitfuse",
+    "userInterfaceStyle": "automatic",
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.fitfuse.app"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#ffffff"
+      },
+      "package": "com.fitfuse.app",
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO"
+      ]
+    },
+    "plugins": [
+      "expo-router",
+      "expo-asset",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow FitFuse to access your camera."
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow FitFuse to access your photos."
+        }
+      ],
+      "expo-secure-store"
+    ],
+    "experiments": {
+      "typedRoutes": true
+    },
+    "extra": {
+      "router": {
+        "origin": false
+      },
+      "eas": {
+        "projectId": "c188b6d0-a8df-412f-a470-7e89f63000ce"
+      }
+    },
+    "owner": "zulqaif223s-organization"
+  }
+}
