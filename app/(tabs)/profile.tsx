@@ -4,7 +4,7 @@ import {
   TextInput, Alert, ActivityIndicator, Image,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { LogOut, Edit2, Users, Shirt, MapPin, Heart, X, Search, UserPlus, UserMinus, Camera } from 'lucide-react-native';
+import { LogOut, Edit2, Users, Shirt, MapPin, Heart, X, Search, UserPlus, UserMinus, Camera, UserCheck } from 'lucide-react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { useAuth } from '../../src/AuthContext';
 import { profilesApi, wardrobeApi, followsApi } from '../../src/api';
@@ -186,7 +186,7 @@ export default function Profile() {
             <Text style={styles.statLabel}>Followers</Text>
           </View>
           <View style={styles.statBox}>
-            <Heart size={20} color={colors.ink} strokeWidth={1.8} />
+            <UserCheck size={20} color={colors.ink} strokeWidth={1.8} />
             <Text style={styles.statNum}>{followingCount}</Text>
             <Text style={styles.statLabel}>Following</Text>
           </View>
