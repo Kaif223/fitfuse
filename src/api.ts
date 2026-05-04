@@ -388,13 +388,13 @@ export const recommendApi = {
     // Decide which seasons are relevant for this temperature
     let preferredSeasons: string[];
     let tempLabel: string;
-    if (tempC < 15) {
+    if (tempC < 12) {
       preferredSeasons = ['winter'];
       tempLabel = `very cold (${Math.round(tempC)}°C) — heavy winter outfit`;
-    } else if (tempC < 25) {
+    } else if (tempC < 20) {
       preferredSeasons = ['autumn'];
       tempLabel = `cool (${Math.round(tempC)}°C) — light layers outfit`;
-    } else if (tempC < 30) {
+    } else if (tempC < 26) {
       preferredSeasons = ['spring'];
       tempLabel = `warm (${Math.round(tempC)}°C) — warm weather outfit`;
     } else {
@@ -427,43 +427,70 @@ export const recommendApi = {
     };
   },
 
-  // Analyze a scanned outfit photo and match with wardrobe
-  async analyzeOutfitPhoto(base64Image: string, wardrobeItems: any[]) {
-    const prompt = `You are a fashion AI. Analyze this outfit photo and match it with the user's wardrobe items.
+  // Scan tab: suggest a weather-aware random outfit combo from wardrobe.
+  // No Gemini. No AI. 100% free, instant, never fails.
+  async analyzeOutfitPhoto(base64Image: string, wardrobeItems: any[], city?: string) {
 
-User's wardrobe:
-${wardrobeItems.map(i => `- ${i.name} (${i.type}, ${i.color}, ${i.style})`).join('\n')}
+    // ── Step 1: Get weather season (optional, graceful fallback) ──────────
+    let preferredSeasons: string[] = ['all', 'spring', 'summer', 'autumn', 'winter']; // default = anything
+    let weatherLabel = 'your current weather';
 
-Return a JSON object with:
-{
-  "analysis": "What you see in the photo",
-  "matches": [
-    { "name": "item name", "type": "type", "color": "color", "reason": "why it matches" }
-  ]
-}`;
+    if (city && OPENWEATHER_KEY) {
+      try {
+        const url = `https://api.openweathermap.org/data/2.5/weather?q=${encodeURIComponent(city)}&appid=${OPENWEATHER_KEY}&units=metric`;
+        const res = await fetch(url);
+        if (res.ok) {
+          const json = await res.json();
+          const tempC: number = json.main?.temp ?? 25;
 
-    const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_KEY}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{
-            parts: [
-              { text: prompt },
-              { inline_data: { mime_type: 'image/jpeg', data: base64Image } },
-            ],
-          }],
-        }),
+          if (tempC < 12) {
+            preferredSeasons = ['winter', 'all'];
+            weatherLabel = `cold weather (${Math.round(tempC)}°C)`;
+          } else if (tempC < 20) {
+            preferredSeasons = ['autumn', 'all'];
+            weatherLabel = `cool weather (${Math.round(tempC)}°C)`;
+          } else if (tempC < 27) {
+            preferredSeasons = ['spring', 'all'];
+            weatherLabel = `warm weather (${Math.round(tempC)}°C)`;
+          } else {
+            preferredSeasons = ['summer', 'all'];
+            weatherLabel = `hot weather (${Math.round(tempC)}°C)`;
+          }
+        }
+      } catch {
+        // Weather fetch failed — silently fall back to showing any item
       }
-    );
-    const data = await res.json();
-    const text = data.candidates?.[0]?.content?.parts?.[0]?.text ?? '{}';
-    try {
-      const jsonMatch = text.match(/\{[\s\S]*\}/);
-      return jsonMatch ? JSON.parse(jsonMatch[0]) : { analysis: text, matches: [] };
-    } catch {
-      return { analysis: text, matches: [] };
     }
+
+    // ── Step 2: Random pick helper ────────────────────────────────────────
+    // Priority: items matching preferred season → items tagged 'all' → any item of that type
+    const randomPick = (type: string) => {
+      const ofType = wardrobeItems.filter(i => i.type === type);
+      if (ofType.length === 0) return null;
+
+      // First try season-matching items
+      const seasonal = ofType.filter(i => preferredSeasons.includes(i.season ?? 'all'));
+      const pool = seasonal.length > 0 ? seasonal : ofType; // fallback to any
+      const item = pool[Math.floor(Math.random() * pool.length)];
+      return {
+        id: item.id,
+        name: item.name,
+        color: item.color,
+        image_url: item.image_url ?? null,
+      };
+    };
+
+    // ── Step 3: Build combo ───────────────────────────────────────────────
+    const shirt = randomPick('shirt') ?? randomPick('jacket');
+    const pants = randomPick('pants') ?? randomPick('other');
+    const shoes = randomPick('shoes');
+
+    return {
+      human_detected: true,
+      detected_style: 'casual',
+      detected_occasion: 'daily wear',
+      style_summary: `Outfit suggested for ${weatherLabel} from your closet.`,
+      suggestion: { shirt, pants, shoes },
+    };
   },
 };
