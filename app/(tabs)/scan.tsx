@@ -133,7 +133,7 @@ export default function Scan() {
           {!loading && result?.human_detected && (
             <>
               {/* Style detected */}
-              <View style={styles.styleCard}>
+              {/* <View style={styles.styleCard}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 6 }}>
                   <Sparkles size={14} color={colors.inkSoft} />
                   <Text style={styles.kicker}>DETECTED STYLE</Text>
@@ -143,7 +143,7 @@ export default function Scan() {
                   {result.detected_style && <View style={styles.tag}><Text style={styles.tagText}>{result.detected_style?.toUpperCase()}</Text></View>}
                   {result.detected_occasion && <View style={styles.tag}><Text style={styles.tagText}>{result.detected_occasion?.toUpperCase()}</Text></View>}
                 </View>
-              </View>
+              </View> */}
 
               {/* Suggested combo label */}
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
@@ -201,9 +201,7 @@ export default function Scan() {
       <SafeAreaView edges={['top']} style={{ flex: 1 }}>
         {/* Top bar */}
         <View style={styles.topBar}>
-          <View style={styles.glassBtn} />
           <View style={styles.glassPill}><Text style={styles.pillText}>AI OUTFIT SCANNER</Text></View>
-          <View style={styles.glassBtn} />
         </View>
 
         {/* Frame + hint */}
@@ -274,7 +272,7 @@ function SlotCard({ label, item }: { label: string; item: any }) {
 
 const styles = StyleSheet.create({
   // Camera screen
-  topBar: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 24, paddingTop: 8 },
+  topBar: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', paddingHorizontal: 24, paddingTop: 8 },
   glassBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.18)', alignItems: 'center', justifyContent: 'center' },
   glassPill: { backgroundColor: 'rgba(255,255,255,0.18)', paddingHorizontal: 16, paddingVertical: 6, borderRadius: 999 },
   pillText: { fontSize: 10, fontWeight: '700', letterSpacing: 1.5, color: colors.white },
@@ -288,7 +286,7 @@ const styles = StyleSheet.create({
   title: { marginTop: 24, fontSize: 22, color: colors.white, fontWeight: '600', textAlign: 'center' },
   subtitle: { marginTop: 8, fontSize: 12, lineHeight: 18, color: 'rgba(255,255,255,0.7)', textAlign: 'center', maxWidth: 280 },
   captureRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-around', paddingHorizontal: 40, marginBottom: 36 },
-  glassSquare: { width: 48, height: 48, borderRadius: 16, backgroundColor: 'rgba(255,255,255,0.18)', alignItems: 'center', justifyContent: 'center' },
+  glassSquare: { width: 48, height: 48, borderRadius: 16, backgroundColor: 'transparent', alignItems: 'center', justifyContent: 'center' },
   shutter: { width: 80, height: 80, borderRadius: 40, borderWidth: 3, borderColor: 'rgba(255,255,255,0.5)', alignItems: 'center', justifyContent: 'center' },
   shutterInner: { width: 64, height: 64, borderRadius: 32, backgroundColor: colors.white },
 

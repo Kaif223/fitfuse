@@ -4,7 +4,7 @@ import {
   TextInput, Alert, ActivityIndicator, Image,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { LogOut, Edit2, Users, Shirt, MapPin, Heart, X, Search, UserPlus, UserMinus, Camera, Bell, Check } from 'lucide-react-native';
+import { LogOut, Edit2, Users, Shirt, MapPin, Heart, X, Search, UserPlus, UserMinus, Camera } from 'lucide-react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { useAuth } from '../../src/AuthContext';
 import { profilesApi, wardrobeApi, followsApi } from '../../src/api';
@@ -53,41 +53,6 @@ export default function Profile() {
   const [searching, setSearching]         = useState(false);
   const [showSearch, setShowSearch]       = useState(false);
 
-  // Follow requests inbox
-  const [pendingRequests, setPendingRequests] = useState<any[]>([]);
-  const [requestsLoading, setRequestsLoading] = useState(false);
-
-  const loadPendingRequests = () => {
-    if (!user) return;
-    setRequestsLoading(true);
-    followsApi.getPendingRequests(user.id)
-      .then(setPendingRequests)
-      .catch(() => {})
-      .finally(() => setRequestsLoading(false));
-  };
-
-  const handleAccept = async (fromId: string) => {
-    if (!user) return;
-    try {
-      await followsApi.acceptRequest(fromId, user.id);
-      // Remove from list immediately
-      setPendingRequests(prev => prev.filter(r => r.id !== fromId));
-      // Refresh follower count from DB
-      const newCount = await followsApi.getFollowerCount(user.id);
-      setFollowerCount(newCount);
-    } catch (e: any) {
-      Alert.alert('Could not accept request', e?.message ?? String(e));
-    }
-  };
-
-  const handleDecline = async (fromId: string) => {
-    if (!user) return;
-    try {
-      await followsApi.declineRequest(fromId, user.id);
-      setPendingRequests(prev => prev.filter(r => r.id !== fromId));
-    } catch (e: any) { Alert.alert('Error', e.message); }
-  };
-
   // Load stats on mount
   useEffect(() => {
     if (!user) return;
@@ -97,7 +62,6 @@ export default function Profile() {
     profilesApi.getUserPosts(user.id)
       .then(d => { setMyPosts(d ?? []); setPostsLoading(false); })
       .catch(() => setPostsLoading(false));
-    loadPendingRequests();
   }, [user]);
 
   // Sync form fields when profile loads
@@ -248,45 +212,6 @@ export default function Profile() {
           </Pressable>
         )}
 
-        {/* Follow Requests Inbox */}
-        <View style={styles.section}>
-          <Pressable style={styles.sectionHeader} onPress={loadPendingRequests}>
-            <Bell size={16} color={colors.inkSoft} strokeWidth={1.8} />
-            <Text style={styles.sectionTitle}>Follow Requests</Text>
-            {pendingRequests.length > 0 && (
-              <View style={styles.badge}><Text style={styles.badgeText}>{pendingRequests.length}</Text></View>
-            )}
-          </Pressable>
-          {requestsLoading ? (
-            <ActivityIndicator color={colors.ink} style={{ marginTop: 8 }} />
-          ) : pendingRequests.length === 0 ? (
-            <Text style={{ color: colors.inkSoft, fontSize: 13, marginTop: 4 }}>No pending requests</Text>
-          ) : (
-            pendingRequests.map(req => (
-              <View key={req.id} style={styles.userRow}>
-                <View style={styles.userAvatar}>
-                  {req.avatar_url
-                    ? <Image source={{ uri: req.avatar_url }} style={{ width: 44, height: 44, borderRadius: 22 }} />
-                    : <Text style={{ fontWeight: '600' }}>{(req.name ?? '?')[0].toUpperCase()}</Text>
-                  }
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.userName}>{req.name}</Text>
-                  <Text style={styles.userSub}>{req.bio ?? 'Wants to follow you'}</Text>
-                </View>
-                <View style={{ flexDirection: 'row', gap: 8 }}>
-                  <Pressable onPress={() => handleAccept(req.id)} style={styles.acceptBtn}>
-                    <Check size={15} color="#fff" strokeWidth={2.5} />
-                  </Pressable>
-                  <Pressable onPress={() => handleDecline(req.id)} style={styles.declineBtn}>
-                    <X size={15} color={colors.ink} strokeWidth={2.5} />
-                  </Pressable>
-                </View>
-              </View>
-            ))
-          )}
-        </View>
-
         {/* Find People */}
         <View style={styles.section}>
           <Pressable style={styles.sectionHeader} onPress={() => setShowSearch(v => !v)}>
@@ -332,7 +257,7 @@ export default function Profile() {
         </View>
 
         {/* My Posts */}
-        <View style={[styles.section, { padding: 0, overflow: 'hidden' }]}>
+        {/* <View style={[styles.section, { padding: 0, overflow: 'hidden' }]}>
           <View style={[styles.sectionHeader, { padding: 16 }]}>
             <Text style={styles.sectionTitle}>My Posts</Text>
           </View>
@@ -347,7 +272,7 @@ export default function Profile() {
               ))}
             </View>
           )}
-        </View>
+        </View> */}
 
       </ScrollView>
     </SafeAreaView>

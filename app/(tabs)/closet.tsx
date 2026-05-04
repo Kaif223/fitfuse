@@ -146,9 +146,9 @@ export default function Closet() {
               <Text style={styles.kicker}>YOUR WARDROBE</Text>
               <Text style={styles.h1}>Digital <Text style={styles.italic}>Closet</Text></Text>
             </View>
-            <Pressable style={styles.iconBtn}>
+            {/* <Pressable style={styles.iconBtn}>
               <SlidersHorizontal size={18} color={colors.ink} strokeWidth={1.6} />
-            </Pressable>
+            </Pressable> */}
           </View>
 
           {/* Search */}
