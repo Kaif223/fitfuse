@@ -89,7 +89,19 @@ export default function Profile() {
     setSearching(true);
     try {
       const results = await profilesApi.searchUsers(searchQuery.trim());
-      setSearchResults((results ?? []).filter((u: any) => u.id !== user?.id));
+      const filtered = (results ?? []).filter((u: any) => u.id !== user?.id);
+
+      // Pre-populate follow state for each result so the correct button shows
+      const withStatus = await Promise.all(
+        filtered.map(async (u: any) => {
+          const [following, pending] = await Promise.all([
+            followsApi.isFollowing(user!.id, u.id),
+            followsApi.hasPendingRequest(user!.id, u.id),
+          ]);
+          return { ...u, _following: following, _pending: !following && pending };
+        })
+      );
+      setSearchResults(withStatus);
     } catch (e: any) {
       Alert.alert('Error', e.message);
     } finally {
@@ -242,13 +254,27 @@ export default function Profile() {
                     <Text style={styles.userName}>{u.name}</Text>
                     <Text style={styles.userSub}>{u.bio ?? 'No bio'}</Text>
                   </View>
-                  <Pressable onPress={() => handleFollow(u.id)} style={styles.followBtn}>
-                    {u._following
-                      ? <UserMinus size={16} color={colors.ink} strokeWidth={1.8} />
-                      : u._pending
-                        ? <X size={16} color={colors.inkSoft} strokeWidth={1.8} />
-                        : <UserPlus size={16} color={colors.ink} strokeWidth={1.8} />
-                    }
+                  <Pressable onPress={() => handleFollow(u.id)} style={[
+                    styles.followBtn,
+                    u._following && styles.followBtnActive,
+                    u._pending && styles.followBtnPending,
+                  ]}>
+                    {u._following ? (
+                      <>
+                        <UserMinus size={14} color={colors.white} strokeWidth={1.8} />
+                        <Text style={styles.followBtnText}>Unfollow</Text>
+                      </>
+                    ) : u._pending ? (
+                      <>
+                        <X size={14} color={colors.inkSoft} strokeWidth={1.8} />
+                        <Text style={[styles.followBtnText, { color: colors.inkSoft }]}>Pending</Text>
+                      </>
+                    ) : (
+                      <>
+                        <UserPlus size={14} color={colors.ink} strokeWidth={1.8} />
+                        <Text style={[styles.followBtnText, { color: colors.ink }]}>Follow</Text>
+                      </>
+                    )}
                   </Pressable>
                 </View>
               ))}
@@ -311,7 +337,10 @@ const styles = StyleSheet.create({
   userAvatar: { width: 44, height: 44, borderRadius: 22, backgroundColor: colors.bg, alignItems: 'center', justifyContent: 'center' },
   userName: { fontSize: 15, fontWeight: '600', color: colors.ink },
   userSub: { fontSize: 12, color: colors.inkSoft },
-  followBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: colors.bg, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: colors.line },
+  followBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 12, paddingVertical: 8, borderRadius: radius.full, backgroundColor: colors.bg, borderWidth: 1, borderColor: colors.line },
+  followBtnActive: { backgroundColor: '#EF4444', borderColor: '#EF4444' },
+  followBtnPending: { backgroundColor: colors.surface, borderColor: colors.line },
+  followBtnText: { fontSize: 12, fontWeight: '600', color: colors.white },
   postsGrid: { flexDirection: 'row', flexWrap: 'wrap' },
   postThumb: { width: '33.33%', aspectRatio: 1 },
   badge: { minWidth: 18, height: 18, borderRadius: 9, backgroundColor: '#EF4444', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 5, marginLeft: 6 },
