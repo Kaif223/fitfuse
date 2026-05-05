@@ -1,6 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
 import * as SecureStore from 'expo-secure-store';
-import * as FileSystem from 'expo-file-system';
+import { File, Paths } from 'expo-file-system';
 
 const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL!;
 const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY!;
@@ -41,21 +41,22 @@ export async function uploadImage(
 ): Promise<string> {
   const filename = `${userId}/${Date.now()}.jpg`;
 
-  // Read the file as base64 — works reliably on React Native for local URIs
-  const base64 = await FileSystem.readAsStringAsync(uri, {
-    encoding: FileSystem.EncodingType.Base64,
-  });
-
-  // Decode base64 → Uint8Array (what Supabase Storage expects)
-  const byteCharacters = atob(base64);
-  const byteArray = new Uint8Array(byteCharacters.length);
-  for (let i = 0; i < byteCharacters.length; i++) {
-    byteArray[i] = byteCharacters.charCodeAt(i);
+  // expo-file-system v19 new API: create a File reference from the URI.
+  // On Android the gallery may return a content:// URI — copy it to the
+  // app cache first so we always have a readable file:// reference.
+  let fileRef = new File(uri);
+  if (!uri.startsWith('file://')) {
+    const dest = new File(Paths.cache, `upload_${Date.now()}.jpg`);
+    fileRef.copy(dest);
+    fileRef = dest;
   }
+
+  // Read the file as a Uint8Array (no base64 / atob needed)
+  const bytes = await fileRef.bytes();
 
   const { error } = await supabase.storage
     .from(bucket)
-    .upload(filename, byteArray, { contentType: 'image/jpeg', upsert: false });
+    .upload(filename, bytes, { contentType: 'image/jpeg', upsert: false });
 
   if (error) throw error;
   return filename;

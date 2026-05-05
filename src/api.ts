@@ -1,7 +1,7 @@
 import { supabase, uploadImage, getPublicUrl } from './supabase';
 
 const OPENWEATHER_KEY = process.env.EXPO_PUBLIC_OPENWEATHER_API_KEY;
-const GEMINI_KEY = process.env.EXPO_PUBLIC_GEMINI_API_KEY;
+const GROQ_KEY = process.env.EXPO_PUBLIC_GROQ_API_KEY;
 
 // ============================================================
 // FEED / POSTS
@@ -427,70 +427,164 @@ export const recommendApi = {
     };
   },
 
-  // Scan tab: suggest a weather-aware random outfit combo from wardrobe.
-  // No Gemini. No AI. 100% free, instant, never fails.
+  // Analyze a scanned outfit photo — detect human, extract style, suggest wardrobe combo
+  // Optionally pass city to factor in live weather when picking wardrobe items
   async analyzeOutfitPhoto(base64Image: string, wardrobeItems: any[], city?: string) {
-
-    // ── Step 1: Get weather season (optional, graceful fallback) ──────────
-    let preferredSeasons: string[] = ['all', 'spring', 'summer', 'autumn', 'winter']; // default = anything
-    let weatherLabel = 'your current weather';
-
-    if (city && OPENWEATHER_KEY) {
+    // ── Fetch live weather if city is provided ──────────────
+    let weatherContext = '';
+    let weatherLabel = '';
+    if (city) {
       try {
-        const url = `https://api.openweathermap.org/data/2.5/weather?q=${encodeURIComponent(city)}&appid=${OPENWEATHER_KEY}&units=metric`;
-        const res = await fetch(url);
-        if (res.ok) {
-          const json = await res.json();
-          const tempC: number = json.main?.temp ?? 25;
+        const weatherData = await this.getWeather(city);
+        const tempC: number = weatherData.main?.temp ?? 20;
+        const condition: string = weatherData.weather?.[0]?.description ?? '';
 
-          if (tempC < 12) {
-            preferredSeasons = ['winter', 'all'];
-            weatherLabel = `cold weather (${Math.round(tempC)}°C)`;
-          } else if (tempC < 20) {
-            preferredSeasons = ['autumn', 'all'];
-            weatherLabel = `cool weather (${Math.round(tempC)}°C)`;
-          } else if (tempC < 27) {
-            preferredSeasons = ['spring', 'all'];
-            weatherLabel = `warm weather (${Math.round(tempC)}°C)`;
-          } else {
-            preferredSeasons = ['summer', 'all'];
-            weatherLabel = `hot weather (${Math.round(tempC)}°C)`;
-          }
+        if (tempC < 12) {
+          weatherLabel = `winter (${Math.round(tempC)}°C, ${condition})`;
+          weatherContext = `The current weather in ${city} is VERY COLD at ${Math.round(tempC)}°C (${condition}). Prioritise warm, heavy items — winter coats, thick shirts, heavy pants, boots. Avoid light summer clothing.`;
+        } else if (tempC < 20) {
+          weatherLabel = `autumn (${Math.round(tempC)}°C, ${condition})`;
+          weatherContext = `The current weather in ${city} is COOL at ${Math.round(tempC)}°C (${condition}). Prefer layered outfits — light jackets, long-sleeve shirts, full pants.`;
+        } else if (tempC < 26) {
+          weatherLabel = `spring (${Math.round(tempC)}°C, ${condition})`;
+          weatherContext = `The current weather in ${city} is WARM at ${Math.round(tempC)}°C (${condition}). Suggest comfortable spring outfits — light shirts, chinos, sneakers.`;
+        } else {
+          weatherLabel = `summer (${Math.round(tempC)}°C, ${condition})`;
+          weatherContext = `The current weather in ${city} is HOT at ${Math.round(tempC)}°C (${condition}). Suggest light, breathable summer clothing — t-shirts, light pants or shorts, sandals or light sneakers.`;
         }
       } catch {
-        // Weather fetch failed — silently fall back to showing any item
+        // Weather fetch failed — continue without it
       }
     }
 
-    // ── Step 2: Random pick helper ────────────────────────────────────────
-    // Priority: items matching preferred season → items tagged 'all' → any item of that type
-    const randomPick = (type: string) => {
-      const ofType = wardrobeItems.filter(i => i.type === type);
-      if (ofType.length === 0) return null;
+    // Include the season tag of each wardrobe item so AI can match weather
+    const wardrobeList = wardrobeItems.map(i =>
+      `- id:${i.id} | ${i.name} | type:${i.type} | color:${i.color} | style:${i.style} | season:${i.season ?? 'all'}`
+    ).join('\n');
 
-      // First try season-matching items
-      const seasonal = ofType.filter(i => preferredSeasons.includes(i.season ?? 'all'));
-      const pool = seasonal.length > 0 ? seasonal : ofType; // fallback to any
-      const item = pool[Math.floor(Math.random() * pool.length)];
-      return {
-        id: item.id,
-        name: item.name,
-        color: item.color,
-        image_url: item.image_url ?? null,
-      };
-    };
+    const weatherSection = weatherContext
+      ? `\nWEATHER CONTEXT (very important):\n${weatherContext}\nYou MUST prefer items whose season tag matches the current weather (season:"${weatherLabel.split(' ')[0]}" or season:"all"). Do NOT suggest heavy winter clothing in hot weather or light summer clothing in cold weather.\n`
+      : '';
 
-    // ── Step 3: Build combo ───────────────────────────────────────────────
-    const shirt = randomPick('shirt') ?? randomPick('jacket');
-    const pants = randomPick('pants') ?? randomPick('other');
-    const shoes = randomPick('shoes');
+    const prompt = `You are a fashion AI assistant. Analyze the image and respond with ONLY a valid JSON object — no markdown, no code fences, no explanation.
 
-    return {
-      human_detected: true,
-      detected_style: 'casual',
-      detected_occasion: 'daily wear',
-      style_summary: `Outfit suggested for ${weatherLabel} from your closet.`,
-      suggestion: { shirt, pants, shoes },
-    };
+TASK 1 — Detect if a human is present:
+Return "human_detected": true if the image shows ANY of:
+- A real person wearing clothes (photo from a laptop screen, mirror selfie, etc. all count)
+- A fashion model, mannequin, or any human-like figure in clothing
+- Clothes clearly being worn by a human body (even partially visible)
+
+Return "human_detected": false ONLY if the image has NO person at all (e.g. food, car, landscape, blank object).
+When in doubt, return true.
+
+TASK 2 — If human detected, analyze the outfit style:
+- detected_style: the clothing vibe (casual, formal, sporty, traditional, streetwear)
+- detected_occasion: best occasion (daily wear, office, party, gym)
+- style_summary: one sentence describing the outfit
+${weatherSection}
+TASK 3 — If human detected, pick the best outfit from this wardrobe list:
+${wardrobeList.length > 0 ? wardrobeList : '(wardrobe is empty — set all suggestion fields to null)'}
+
+Pick ONE shirt/top, ONE pants/bottom, ONE shoes. Use ONLY items from the list above by their id.
+
+RESPOND WITH EXACTLY ONE OF THESE TWO JSON FORMATS:
+
+If NO human detected:
+{"human_detected":false}
+
+If human IS detected:
+{"human_detected":true,"detected_style":"...","detected_occasion":"...","style_summary":"...","weather_label":"${weatherLabel || 'not available'}","suggestion":{"shirt":{"id":"...","name":"...","color":"..."},"pants":{"id":"...","name":"...","color":"..."},"shoes":{"id":"...","name":"...","color":"..."}}}
+
+Rules:
+- Output ONLY the JSON. No markdown, no backticks, no extra text.
+- If a wardrobe slot has no matching item, set all its fields to null.`;
+
+    // Strip data URL prefix if present (e.g. "data:image/jpeg;base64,...")
+    // Groq vision expects a full data URL, so reconstruct it cleanly
+    let mimeType = 'image/jpeg';
+    if (base64Image.startsWith('data:image/png')) mimeType = 'image/png';
+    else if (base64Image.startsWith('data:image/webp')) mimeType = 'image/webp';
+
+    const cleanBase64 = base64Image.includes(',') ? base64Image.split(',')[1] : base64Image;
+    const dataUrl = `data:${mimeType};base64,${cleanBase64}`;
+
+    // ── Groq Vision API (OpenAI-compatible, free tier) ──────
+    // Model: meta-llama/llama-4-scout-17b-16e-instruct — vision capable, free
+    const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${GROQ_KEY}`,
+      },
+      body: JSON.stringify({
+        model: 'meta-llama/llama-4-scout-17b-16e-instruct',
+        temperature: 0.2,
+        response_format: { type: 'json_object' },
+        messages: [
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'image_url',
+                image_url: { url: dataUrl },
+              },
+              {
+                type: 'text',
+                text: prompt,
+              },
+            ],
+          },
+        ],
+      }),
+    });
+
+    if (!res.ok) {
+      const errBody = await res.text().catch(() => res.statusText);
+      throw new Error(`Groq API error ${res.status}: ${errBody}`);
+    }
+
+    const data = await res.json();
+
+    // Surface API-level errors
+    if (data.error) {
+      throw new Error(`Groq error: ${data.error.message ?? JSON.stringify(data.error)}`);
+    }
+
+    const text: string = data.choices?.[0]?.message?.content ?? '';
+
+    if (!text) {
+      const reason = data.choices?.[0]?.finish_reason ?? 'unknown';
+      throw new Error(`Groq returned no content (finish_reason: ${reason})`);
+    }
+
+    try {
+      // Strip markdown code fences in case model wraps response
+      const cleaned = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+      const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) return { human_detected: false };
+
+      const parsed = JSON.parse(jsonMatch[0]);
+
+      // The AI only knows id/name/color — look up the real image_url from
+      // the wardrobe items so the SlotCard can display the actual photo.
+      if (parsed.human_detected && parsed.suggestion) {
+        const byId: Record<string, any> = {};
+        wardrobeItems.forEach((i: any) => { byId[i.id] = i; });
+
+        const enrich = (slot: any) => {
+          if (!slot || !slot.id) return slot;
+          const match = byId[slot.id];
+          return match ? { ...slot, image_url: match.image_url ?? null } : slot;
+        };
+
+        parsed.suggestion.shirt = enrich(parsed.suggestion.shirt);
+        parsed.suggestion.pants = enrich(parsed.suggestion.pants);
+        parsed.suggestion.shoes = enrich(parsed.suggestion.shoes);
+      }
+
+      return parsed;
+    } catch {
+      throw new Error(`Could not parse Groq response: ${text.slice(0, 200)}`);
+    }
   },
 };

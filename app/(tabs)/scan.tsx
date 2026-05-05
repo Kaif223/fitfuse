@@ -4,7 +4,7 @@ import {
   ActivityIndicator, ScrollView, Alert,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { ImageIcon, X, Sparkles, UserX, ShoppingBag } from 'lucide-react-native';
+import { ImageIcon, X, Sparkles, UserX, ShoppingBag, CloudSun } from 'lucide-react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { CameraView, useCameraPermissions, CameraView as CameraViewType } from 'expo-camera';
 import * as ImagePicker from 'expo-image-picker';
@@ -47,11 +47,11 @@ export default function Scan() {
       // Run outfit suggestion + 3s minimum loading in parallel
       const [data] = await Promise.all([
         recommendApi.analyzeOutfitPhoto(base64, items, profile?.city),
-        new Promise(resolve => setTimeout(resolve, 3000)),
+        new Promise(resolve => setTimeout(resolve, 2000)),
       ]);
       setResult(data);
     } catch (e: any) {
-      Alert.alert('Error', e.message ?? 'Could not analyze image.');
+      Alert.alert('Analysis Failed', e.message ?? 'Could not analyze image. Check your internet connection and try again.');
       reset();
     } finally {
       setLoading(false);
@@ -132,6 +132,15 @@ export default function Scan() {
           {/* Outfit Suggestion */}
           {!loading && result?.human_detected && (
             <>
+              {/* Weather badge */}
+              {result.weather_label && result.weather_label !== 'not available' && (
+                <View style={styles.weatherBadge}>
+                  <CloudSun size={14} color="#f59e0b" strokeWidth={2} />
+                  <Text style={styles.weatherBadgeText}>
+                    Matched for {result.weather_label}
+                  </Text>
+                </View>
+              )}
               {/* Style detected */}
               {/* <View style={styles.styleCard}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 6 }}>
@@ -325,6 +334,10 @@ const styles = StyleSheet.create({
   notAvailableRow: { gap: 4 },
   notAvailableText: { fontSize: 14, color: '#e74c3c', fontWeight: '500' },
   notAvailableHint: { fontSize: 12, color: colors.inkSoft },
+
+  // Weather badge
+  weatherBadge: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: '#fef3c7', borderRadius: 999, paddingHorizontal: 14, paddingVertical: 8, alignSelf: 'flex-start', borderWidth: 1, borderColor: '#fde68a' },
+  weatherBadgeText: { fontSize: 12, fontWeight: '600', color: '#92400e' },
 
   // Buttons
   tryAgainBtn: { backgroundColor: colors.ink, borderRadius: radius.md, paddingVertical: 10, paddingHorizontal: 20, alignItems: 'center', marginTop: 4 },

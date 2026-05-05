@@ -21,7 +21,7 @@ A smart wardrobe & outfit management app built with React Native + Expo.
 | Database | Supabase (PostgreSQL) |
 | Auth | Supabase Auth |
 | Storage | Supabase Storage |
-| AI | Google Gemini API |
+| AI | Groq API (Llama 4 Scout Vision) |
 | Weather | OpenWeather API |
 
 ## Getting Started
@@ -65,7 +65,7 @@ node server.js
 EXPO_PUBLIC_SUPABASE_URL=your-supabase-url
 EXPO_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
 EXPO_PUBLIC_OPENWEATHER_API_KEY=your-openweather-key
-EXPO_PUBLIC_GEMINI_API_KEY=your-gemini-key
+EXPO_PUBLIC_GROQ_API_KEY=your-groq-key
 ```
 
 ## Project Structure

@@ -37,5 +37,10 @@
   "devDependencies": {
     "@babel/core": "^7.24.0",
     "typescript": "~5.9.2"
+  },
+  "overrides": {
+    "lucide-react-native": {
+      "react": "^19.0.0"
+    }
   }
 }

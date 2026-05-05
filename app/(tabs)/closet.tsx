@@ -81,7 +81,7 @@ export default function Closet() {
       setShowAdd(false);
       resetForm();
     } catch (e: any) {
-      Alert.alert('Error adding item', e);
+      Alert.alert('Error adding item', typeof e === 'string' ? e : e?.message ?? 'Something went wrong');
     } finally {
       setSaving(false);
     }
