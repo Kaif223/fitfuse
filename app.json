@@ -6,9 +6,9 @@
     "orientation": "portrait",
     "scheme": "fitfuse",
     "userInterfaceStyle": "automatic",
-    "icon": "./assets/fitfuse_logo.jpeg",
+    "icon": "./assets/fitfuse_logo.png",
     "splash": {
-      "image": "./assets/fitfuse_logo.jpeg",
+      "image": "./assets/fitfuse_logo.png",
       "resizeMode": "contain",
       "backgroundColor": "#0D0D0D"
     },
@@ -21,7 +21,7 @@
     },
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./assets/fitfuse_logo.jpeg",
+        "foregroundImage": "./assets/fitfuse_logo.png",
         "backgroundColor": "#0D0D0D"
       },
       "package": "com.fitfuse.app",
