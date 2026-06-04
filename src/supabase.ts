@@ -1,16 +1,15 @@
+import 'react-native-url-polyfill/auto';
 import { createClient } from '@supabase/supabase-js';
-import * as SecureStore from 'expo-secure-store';
 import { File, Paths } from 'expo-file-system';
 
 const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL!;
 const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY!;
 
-// Custom storage adapter using expo-secure-store
-// This keeps the user session alive between app restarts
+const memoryStore = new Map<string, string>();
 const ExpoSecureStoreAdapter = {
-  getItem: (key: string) => SecureStore.getItemAsync(key),
-  setItem: (key: string, value: string) => SecureStore.setItemAsync(key, value),
-  removeItem: (key: string) => SecureStore.deleteItemAsync(key),
+  getItem: (key: string) => memoryStore.get(key) ?? null,
+  setItem: (key: string, value: string) => { memoryStore.set(key, value); },
+  removeItem: (key: string) => { memoryStore.delete(key); },
 };
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {

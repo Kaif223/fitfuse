@@ -263,8 +263,25 @@ export const followsApi = {
 // ============================================================
 // WARDROBE
 // ============================================================
+const WARDROBE_BUCKET = 'wardrobe-images';
+
+// The wardrobe-images bucket is PRIVATE, so images need a signed URL to load.
+// We store the storage PATH in the DB (never a signed URL — those expire) and
+// mint a fresh signed URL on every fetch. This also handles legacy rows that
+// stored a full signed URL: we recover the path from the URL before re-signing.
+function storagePathFromStored(stored: string | null): string | null {
+  if (!stored) return null;
+  // Already a bare path (new rows): "userId/123.jpg"
+  if (!stored.startsWith('http')) return stored;
+  // Legacy full URL: .../object/(sign|public)/wardrobe-images/<path>?token=...
+  const marker = `/${WARDROBE_BUCKET}/`;
+  const idx = stored.indexOf(marker);
+  if (idx === -1) return null;
+  return stored.slice(idx + marker.length).split('?')[0];
+}
+
 export const wardrobeApi = {
-  // Fetch all wardrobe items for a user
+  // Fetch all wardrobe items for a user, attaching a fresh signed image URL.
   async getItems(userId: string) {
     const { data, error } = await supabase
       .from('wardrobe_items')
@@ -272,26 +289,37 @@ export const wardrobeApi = {
       .eq('user_id', userId)
       .order('created_at', { ascending: false });
     if (error) throw error;
-    return data;
+    if (!data || data.length === 0) return data;
+
+    // Build a fresh signed URL for each item's storage path (batch request).
+    const paths = data.map((i: any) => storagePathFromStored(i.image_url));
+    const valid = paths.filter((p): p is string => !!p);
+    const signedByPath: Record<string, string> = {};
+    if (valid.length > 0) {
+      const { data: signed } = await supabase.storage
+        .from(WARDROBE_BUCKET)
+        .createSignedUrls(valid, 60 * 60); // 1 hour, regenerated each fetch
+      signed?.forEach((s) => {
+        if (s.signedUrl && s.path) signedByPath[s.path] = s.signedUrl;
+      });
+    }
+    return data.map((item: any, idx: number) => {
+      const path = paths[idx];
+      return { ...item, image_url: path ? signedByPath[path] ?? null : null };
+    });
   },
 
-  // Add a new clothing item
+  // Add a new clothing item. Stores the storage PATH (not a signed URL).
   async addItem(userId: string, item: {
     name: string; type: string; style: string;
     color: string; season: string; imageUri: string;
   }) {
-    const path = await uploadImage('wardrobe-images', userId, item.imageUri);
-    // Use a signed URL (1 week expiry) since wardrobe-images is a private bucket
-    const { data: signedData, error: signedError } = await supabase.storage
-      .from('wardrobe-images')
-      .createSignedUrl(path, 60 * 60 * 24 * 7);
-    if (signedError) throw signedError;
-    const imageUrl = signedData.signedUrl;
+    const path = await uploadImage(WARDROBE_BUCKET, userId, item.imageUri);
     const { data, error } = await supabase
       .from('wardrobe_items')
       .insert({
         user_id: userId,
-        image_url: imageUrl,
+        image_url: path,
         name: item.name,
         type: item.type,
         style: item.style,
@@ -301,7 +329,11 @@ export const wardrobeApi = {
       .select()
       .single();
     if (error) throw error;
-    return data;
+    // Return with a usable signed URL so the UI can show it immediately.
+    const { data: signed } = await supabase.storage
+      .from(WARDROBE_BUCKET)
+      .createSignedUrl(path, 60 * 60);
+    return { ...data, image_url: signed?.signedUrl ?? null };
   },
 
   // Delete a wardrobe item
