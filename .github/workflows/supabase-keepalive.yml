@@ -1,0 +1,36 @@
+# Keeps the Supabase Free-plan project from auto-pausing.
+# Supabase pauses free projects after 7 days of low database activity; one
+# real query a day is enough. If the project is already paused (or the keys
+# are wrong) this job fails, and GitHub emails you — so it doubles as an alert.
+#
+# Needs two repository secrets (Settings → Secrets and variables → Actions):
+#   SUPABASE_URL       same value as EXPO_PUBLIC_SUPABASE_URL in .env
+#   SUPABASE_ANON_KEY  same value as EXPO_PUBLIC_SUPABASE_ANON_KEY in .env
+
+name: Supabase keep-alive
+
+on:
+  schedule:
+    - cron: '17 3 * * *' # daily, 03:17 UTC (08:17 PKT); off the hour to avoid GitHub's peak queue
+  workflow_dispatch: # allow a manual run from the Actions tab
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Query the database
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: |
+          if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_ANON_KEY" ]; then
+            echo "::error::SUPABASE_URL / SUPABASE_ANON_KEY secrets are not set"
+            exit 1
+          fi
+          # A real table read (not a health check) so it counts as database activity
+          curl --fail-with-body --silent --show-error --retry 3 --retry-delay 10 \
+            "$SUPABASE_URL/rest/v1/profiles?select=id&limit=1" \
+            -H "apikey: $SUPABASE_ANON_KEY" \
+            -H "Authorization: Bearer $SUPABASE_ANON_KEY" \
+            -o /dev/null -w "Supabase responded HTTP %{http_code}\n"
