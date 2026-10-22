@@ -164,6 +164,8 @@ npm start                 # or: npm run android / npm run ios
 
 Scan the QR code with **Expo Go**, or press `a` / `i` in the terminal.
 
+> Use `npm start`, not bare `npx expo start`. The scripts pass `--offline`: when you are not logged in to Expo, the CLI otherwise stalls while signing the manifest for the project's Expo account, and Expo Go gives up after 60 s with *"Failed to download remote update"*.
+
 > Run the [Supabase migrations](#supabase-setup) **before** first launch, otherwise login will succeed but every query will fail.
 
 ---
