@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
 import * as SecureStore from 'expo-secure-store';
+import { Platform } from 'react-native';
 import { File } from 'expo-file-system';
 
 const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL!;
@@ -15,7 +16,8 @@ const ExpoSecureStoreAdapter = {
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   auth: {
-    storage: ExpoSecureStoreAdapter,
+    // SecureStore has no web implementation — let Supabase use localStorage there
+    storage: Platform.OS === 'web' ? undefined : ExpoSecureStoreAdapter,
     autoRefreshToken: true,
     persistSession: true,
     detectSessionInUrl: false,
@@ -41,8 +43,11 @@ export async function uploadImage(
 ): Promise<string> {
   const filename = `${userId}/${Date.now()}.jpg`;
 
-  // Read the local file's raw bytes — Supabase Storage accepts an ArrayBuffer directly
-  const bytes = await new File(uri).arrayBuffer();
+  // Read the local file's raw bytes — Supabase Storage accepts an ArrayBuffer directly.
+  // On web the picker returns a blob:/data: URI, which only fetch() can read.
+  const bytes = Platform.OS === 'web'
+    ? await (await fetch(uri)).arrayBuffer()
+    : await new File(uri).arrayBuffer();
 
   const { error } = await supabase.storage
     .from(bucket)
