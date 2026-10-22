@@ -22,7 +22,7 @@ export default function Scan() {
 
   const pickFromGallery = async () => {
     const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      mediaTypes: ['images'],
       base64: true,
       quality: 0.7,
     });
@@ -115,7 +115,7 @@ export default function Scan() {
     <View style={{ flex: 1, backgroundColor: '#000' }}>
       <LinearGradient
         colors={['rgba(0,0,0,0.7)', 'rgba(0,0,0,0.2)', 'rgba(0,0,0,0.85)']}
-        style={StyleSheet.absoluteFillObject}
+        style={StyleSheet.absoluteFill}
       />
 
       <SafeAreaView edges={['top']} style={{ flex: 1 }}>
