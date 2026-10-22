@@ -21,7 +21,9 @@
       },
       "package": "com.fitfuse.app",
       "permissions": [
-        "android.permission.CAMERA",
+        "android.permission.CAMERA"
+      ],
+      "blockedPermissions": [
         "android.permission.RECORD_AUDIO"
       ]
     },
@@ -31,7 +33,8 @@
       [
         "expo-camera",
         {
-          "cameraPermission": "Allow FitFuse to access your camera."
+          "cameraPermission": "Allow FitFuse to access your camera.",
+          "recordAudioAndroid": false
         }
       ],
       [
