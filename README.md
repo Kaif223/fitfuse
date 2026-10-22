@@ -1,7 +1,8 @@
 # FitFuse 👗
 
-> A smart wardrobe & social outfit management app built with **React Native + Expo**.  
-> Manage your digital closet, get AI-powered outfit suggestions, share looks with friends, and dress smart for the weather.
+A smart wardrobe and social outfit app built with **React Native + Expo**. Catalogue your clothes, get outfit suggestions based on live weather, scan an outfit photo for AI-matched suggestions from your own closet, and share looks with the people you follow.
+
+> **Architecture note:** FitFuse is a **serverless / backend-less app**. The Expo client talks directly to Supabase (Postgres + Auth + Storage), with row-level security enforcing access control.
 
 ---
 
@@ -9,12 +10,14 @@
 
 - [Features](#features)
 - [Tech Stack](#tech-stack)
+- [Architecture](#architecture)
 - [Project Structure](#project-structure)
-- [Database Schema](#database-schema)
-- [API Modules](#api-modules)
 - [Getting Started](#getting-started)
 - [Environment Variables](#environment-variables)
 - [Supabase Setup](#supabase-setup)
+- [Database Schema](#database-schema)
+- [API Modules](#api-modules)
+- [Known Issues & Cleanup](#known-issues--cleanup)
 - [Building for Android](#building-for-android)
 - [License](#license)
 
@@ -22,20 +25,31 @@
 
 ## Features
 
-| Feature | Description |
+| Screen | Feature |
 |---|---|
-| � **Digital Closet** | Add, edit, delete clothing items with photos, type, style, color & season tags |
-| 🤖 **AI Outfit Scanner** | Point camera at any person — AI detects style and suggests matching items from your wardrobe |
-| 🌤️ **Weather Recommendations** | Live weather-based outfit suggestions using your city |
-| 📸 **Social Feed** | Share outfit photos with captions, like and comment on posts |
-| 👥 **Follow System** | Send/accept/decline follow requests, see follower & following counts |
-| � **User Search** | Search other users by name, follow/unfollow directly from results |
-| 🔔 **Pending Requests** | View and manage incoming follow requests |
-| 🔐 **Secure Auth** | Email/password auth with persistent sessions via Expo SecureStore |
-| 🖼️ **Avatar Upload** | Update profile picture stored in Supabase Storage |
-- 👥 Follow system
+| **Today** | Greeting + live weather for your city, plus an outfit picked from your closet by temperature band. Also shows your pending follow requests with accept/decline. |
+| **Closet** | Add, browse, filter and delete clothing items with a photo, type, style, colour and season tag. |
+| **Scan** | Take or pick a photo → Groq vision model detects whether a person is present, reads the outfit's style/occasion, and suggests a matching shirt / pants / shoes **from your own wardrobe**, weighted by current weather. |
+| **Feed** | Post outfit photos with captions, like and comment. Toggle between *For You* (everyone) and *Following*. Search users inline. |
+| **Profile** | Edit name / city / bio, upload an avatar, see wardrobe + follower + following counts, view your own posts, search and follow other users. |
+| **Auth** | Email + password sign up / login via Supabase Auth. A Postgres trigger auto-creates the profile row on signup. |
 
-## Tech Stack
+### How the two suggestion engines differ
+
+There are **two separate** outfit engines, and only one uses AI:
+
+- **Today tab** — [`recommendApi.suggestOutfit()`](src/api.ts#L413). Pure local logic, **no AI call**. It reads the temperature and picks random season-matching items:
+
+  | Temperature | Preferred season tag |
+  |---|---|
+  | `< 12°C` | `winter` |
+  | `12–19°C` | `autumn` |
+  | `20–25°C` | `spring` |
+  | `≥ 26°C` | `summer` |
+
+  This is instant, free and never fails — but it only matches items whose `season` tag matches exactly, so a slot is left empty if you have no item for that season.
+
+- **Scan tab** — [`recommendApi.analyzeOutfitPhoto()`](src/api.ts#L464). Sends the photo + your wardrobe list to **Groq** (`meta-llama/llama-4-scout-17b-16e-instruct`) and asks for a strict JSON response. Weather is injected into the prompt when your profile has a city set.
 
 ---
 
@@ -43,19 +57,41 @@
 
 | Layer | Technology | Version |
 |---|---|---|
-| Framework | React Native + Expo | ~54.0.0 |
-| Navigation | Expo Router (file-based) | ~6.0.23 |
-| State Management | Redux Toolkit | ^2.3.0 |
-| Database & Auth | Supabase (PostgreSQL) | ^2.105.1 |
-| Storage | Supabase Storage | — |
-| AI Vision | Groq API — Llama 4 Scout Vision | — |
+| Framework | Expo SDK 58 · React Native 0.88 · React 19.3 | ~58.0.0 |
+| Navigation | Expo Router (file-based) | ~58.0.25 |
+| State | Redux Toolkit + React Redux | ^2.3.0 / ^9.1.2 |
+| Database / Auth | Supabase (PostgreSQL) | ^2.105.1 |
+| File storage | Supabase Storage | — |
+| AI vision | Groq — Llama 4 Scout 17B | — |
 | Weather | OpenWeather API | — |
-| Icons | Lucide React Native | ^0.383.0 |
-| File System | Expo FileSystem v19 | ~19.0.22 |
-| Camera | Expo Camera | ~17.0.10 |
-| Image Picker | Expo ImagePicker | ~17.0.11 |
-| Secure Storage | Expo SecureStore | ~15.0.8 |
-| Language | TypeScript | ~5.9.2 |
+| Icons | Lucide React Native | ^1.61.0 (+ react-native-svg) |
+| Camera / Picker | expo-camera, expo-image-picker | ~58.0.x |
+| Filesystem | expo-file-system (`File` API) | ~58.0.10 |
+| Language | TypeScript | ~6.0.3 |
+
+---
+
+## Architecture
+
+```
+┌─────────────────────────────┐
+│   Expo app (React Native)   │
+│                             │
+│  app/      screens (router) │
+│  src/api.ts  all API calls  │
+│  src/store  Redux slices    │
+└───┬─────────┬───────────┬───┘
+    │         │           │
+    │         │           └──────────► Groq API      (scan → outfit match)
+    │         └──────────────────────► OpenWeather   (city → temp/condition)
+    │
+    └────────────────────────────────► Supabase
+                                        ├─ Auth      (email + password)
+                                        ├─ Postgres  (7 tables + 1 view, RLS on)
+                                        └─ Storage   (3 buckets)
+```
+
+**There is no server of our own.** Security is enforced by Postgres Row Level Security policies, not by application code. Every third-party key in the app is an `EXPO_PUBLIC_*` variable, which means it is bundled into the client — see [Known Issues](#known-issues--cleanup).
 
 ---
 
@@ -63,67 +99,139 @@
 
 ```
 fitfuse/
-├── app/                        # All screens (Expo Router file-based routing)
-│   ├── _layout.tsx             # Root layout — auth gate
+├── app/                        # Screens — Expo Router file-based routing
+│   ├── _layout.tsx             # Root layout: Redux + Auth providers, auth gate/redirect
 │   ├── (auth)/
 │   │   ├── _layout.tsx
-│   │   ├── login.tsx           # Login screen
-│   │   └── register.tsx        # Register screen
+│   │   ├── login.tsx
+│   │   └── register.tsx
 │   └── (tabs)/
-│       ├── _layout.tsx         # Bottom tab navigator
-│       ├── index.tsx           # Home / weather outfit suggestion
-│       ├── feed.tsx            # Social feed (posts, likes, comments)
-│       ├── closet.tsx          # Digital wardrobe manager
+│       ├── _layout.tsx         # Bottom tab bar (5 tabs)
+│       ├── index.tsx           # Today — weather + outfit + follow requests
+│       ├── closet.tsx          # Wardrobe manager
 │       ├── scan.tsx            # AI outfit scanner (camera + Groq)
-│       └── profile.tsx         # Profile, stats, search, follow system
+│       ├── feed.tsx            # Social feed
+│       └── profile.tsx         # Profile, stats, user search, follows
 │
 ├── src/
-│   ├── api.ts                  # All Supabase + AI + Weather API calls
-│   ├── AuthContext.tsx         # Auth state (user, profile, login, logout)
-│   ├── supabase.ts             # Supabase client + uploadImage helper
-│   ├── theme.ts                # Colors, radii, shared design tokens
+│   ├── api.ts                  # All Supabase / Groq / OpenWeather calls
+│   ├── AuthContext.tsx         # user, session, profile, login/register/logout
+│   ├── supabase.ts             # Supabase client + uploadImage / getPublicUrl helpers
+│   ├── theme.ts                # colors, radius, spacing tokens
 │   └── store/
-│       ├── store.ts            # Redux store setup
-│       ├── feedSlice.ts        # Redux slice for posts feed
-│       └── wardrobeSlice.ts    # Redux slice for wardrobe items
+│       ├── store.ts            # Redux store + typed hooks
+│       ├── wardrobeSlice.ts    # fetch / add / delete wardrobe items
+│       └── feedSlice.ts        # fetch posts, optimistic likes
 │
-├── assets/
-│   └── fitfuse_logo.png        # App icon (1024×1024 PNG)
+├── supabase/migrations/        # SQL — run in order in the Supabase SQL Editor
+│   ├── 001_initial_schema.sql
+│   ├── 002_rls_policies.sql
+│   ├── 003_storage_buckets.sql
+│   ├── 004_follow_requests.sql
+│   ├── 005_follows_accept_policy.sql
+│   └── 006_fix_follow_requests_delete.sql
 │
-├── supabase/
-│   └── migrations/             # SQL migrations — run in Supabase SQL Editor
-│       ├── 001_initial_schema.sql
-│       ├── 002_rls_policies.sql
-│       ├── 003_storage_buckets.sql
-│       ├── 004_follow_requests.sql
-│       ├── 005_follows_accept_policy.sql
-│       └── 006_fix_follow_requests_delete.sql
-│
-├── app.json                    # Expo app config
+├── assets/fitfuse_logo.png
+├── app.json                    # Expo config (permissions, plugins, EAS project id)
 ├── eas.json                    # EAS Build profiles
-├── tsconfig.json
-└── .env                        # Local environment variables (git-ignored)
+└── .env                        # Local secrets — git-ignored
 ```
+
+---
+
+## Getting Started
+
+### Prerequisites
+
+- Node.js 18+
+- A [Supabase](https://supabase.com) project
+- A [Groq](https://console.groq.com) API key (free tier)
+- An [OpenWeather](https://openweathermap.org/api) API key (free tier)
+- Expo Go on your phone, or an Android emulator / iOS simulator
+
+### Install & run
+
+```bash
+git clone https://github.com/Kaif223/fitfuse.git
+cd fitfuse
+
+npm install
+
+cp .env.example .env      # then fill in your four keys
+
+npm start                 # or: npm run android / npm run ios
+```
+
+Scan the QR code with **Expo Go**, or press `a` / `i` in the terminal.
+
+> Run the [Supabase migrations](#supabase-setup) **before** first launch, otherwise login will succeed but every query will fail.
+
+---
+
+## Environment Variables
+
+Create `.env` in the project root (copy from `.env.example`):
+
+```bash
+EXPO_PUBLIC_SUPABASE_URL=your-supabase-project-url
+EXPO_PUBLIC_SUPABASE_ANON_KEY=your-supabase-anon-key
+EXPO_PUBLIC_OPENWEATHER_API_KEY=your-openweather-api-key
+EXPO_PUBLIC_GROQ_API_KEY=your-groq-api-key
+```
+
+| Variable | Where to get it |
+|---|---|
+| `EXPO_PUBLIC_SUPABASE_URL` | Supabase Dashboard → Project Settings → API |
+| `EXPO_PUBLIC_SUPABASE_ANON_KEY` | Supabase Dashboard → Project Settings → API |
+| `EXPO_PUBLIC_OPENWEATHER_API_KEY` | [openweathermap.org/api](https://openweathermap.org/api) — free tier |
+| `EXPO_PUBLIC_GROQ_API_KEY` | [console.groq.com](https://console.groq.com) — free tier |
+
+Restart the Expo dev server after editing `.env` — `EXPO_PUBLIC_*` values are inlined at bundle time.
+
+---
+
+## Supabase Setup
+
+Run the migration files **in order** in the Supabase **SQL Editor**:
+
+| File | Creates |
+|---|---|
+| `001_initial_schema.sql` | All tables, indexes, the `handle_new_user` signup trigger, and the `posts_with_details` view |
+| `002_rls_policies.sql` | Row Level Security policies for every table |
+| `003_storage_buckets.sql` | The three storage buckets + their RLS policies |
+| `004_follow_requests.sql` | `follow_requests` table + policies |
+| `005_follows_accept_policy.sql` | Insert policy so a recipient can accept a request |
+| `006_fix_follow_requests_delete.sql` | Delete policy fix for the recipient |
+
+### Storage buckets
+
+| Bucket | Public? | Used for |
+|---|---|---|
+| `post-images` | Public | Feed post photos |
+| `wardrobe-images` | **Private** | Closet photos — served via 1-hour signed URLs, re-minted on every fetch |
+| `avatars` | Public | Profile pictures |
+
+> The wardrobe bucket stores the **storage path** in the DB, never a signed URL (those expire). [`wardrobeApi.getItems()`](src/api.ts) batch-signs the paths on each read and also recovers paths from legacy rows that stored a full URL.
 
 ---
 
 ## Database Schema
 
-### Tables
-
-| Table | Description |
+| Table | Purpose |
 |---|---|
-| `profiles` | One row per user — stores `name`, `avatar_url`, `bio`, `city` |
-| `posts` | Outfit photos with caption, linked to a profile |
-| `likes` | Many-to-many: users ↔ posts (unique per pair) |
+| `profiles` | One row per auth user: `name`, `avatar_url`, `bio`, `city` (defaults to `Faisalabad`). Auto-created by trigger on signup. |
+| `posts` | Outfit photos with caption, owned by a profile |
+| `likes` | user ↔ post, `UNIQUE(post_id, user_id)` |
 | `comments` | Comments on posts |
-| `follows` | Directional follow graph: `follower_id` → `following_id` |
-| `follow_requests` | Pending requests before a follow is accepted |
-| `wardrobe_items` | Clothing items with `type`, `style`, `color`, `season`, `image_url` |
+| `follows` | `follower_id` → `following_id`, unique pair, self-follow blocked by CHECK |
+| `follow_requests` | Pending request before a follow is created |
+| `wardrobe_items` | Clothing items |
+| `outfits` | Saved outfit combos — **table exists but is currently unused by the app** |
+| `posts_with_details` *(view)* | `posts` joined with author profile + like/comment counts — what the feed actually reads |
 
-### Wardrobe Item Fields
+### Wardrobe item fields
 
-| Field | Allowed Values |
+| Field | Allowed values |
 |---|---|
 | `type` | `shirt` · `pants` · `shoes` · `jacket` · `accessory` · `other` |
 | `style` | `casual` · `formal` · `sporty` · `traditional` |
@@ -133,157 +241,58 @@ fitfuse/
 
 ## API Modules
 
-All API calls live in `src/api.ts` and are grouped by domain:
+Everything lives in [src/api.ts](src/api.ts), grouped by domain:
 
-| Export | Purpose |
+| Export | Methods |
 |---|---|
-| `feedApi` | Get all posts, get following-only posts, create post, delete post |
-| `likesApi` | Get user likes, like a post, unlike a post |
-| `commentsApi` | Get comments, add comment, delete comment |
-| `followsApi` | Follow, unfollow, check status, get counts, send/accept/decline requests |
-| `wardrobeApi` | Get items, add item (with image upload), delete item |
-| `profilesApi` | Get profile, get user posts, update profile, search users |
-| `recommendApi` | Get weather, suggest outfit by temperature, AI outfit photo analysis |
+| `feedApi` | `getPosts`, `getFollowingPosts`, `createPost`, `deletePost` |
+| `likesApi` | `getUserLikes`, `like`, `unlike` |
+| `commentsApi` | `getComments`, `addComment`, `deleteComment` |
+| `followsApi` | `follow`, `unfollow`, `isFollowing`, `getFollowerCount`, `getFollowingCount`, `sendRequest`, `cancelRequest`, `acceptRequest`, `declineRequest`, `hasPendingRequest`, `getPendingRequests` |
+| `wardrobeApi` | `getItems`, `addItem`, `deleteItem` |
+| `profilesApi` | `getProfile`, `getUserPosts`, `updateProfile`, `searchUsers` |
+| `recommendApi` | `getWeather`, `suggestOutfit` (local), `analyzeOutfitPhoto` (Groq) |
 
 ---
 
-## Getting Started
+## Known Issues & Cleanup
 
-### Prerequisites
+Honest list of things worth knowing before you build on this:
 
-- Node.js 18+
-- Expo CLI — `npm install -g expo-cli`
-- EAS CLI — `npm install -g eas-cli`
-- A [Supabase](https://supabase.com) project
-- A [Groq](https://console.groq.com) API key (free tier)
-- An [OpenWeather](https://openweathermap.org/api) API key (free tier)
-
-### Installation
-
-```bash
-# 1. Clone the repo
-git clone https://github.com/Kaif223/fitfuse.git
-cd fitfuse
-
-# 2. Install dependencies
-npm install
-
-# 3. Set up environment variables
-cp .env.example .env
-# Edit .env and fill in your API keys
-
-# 4. Start the development server
-npm start
-```
-
-Scan the QR code with the **Expo Go** app, or press `a` for Android emulator / `i` for iOS simulator.
-
----
-
-## Environment Variables
-
-Create a `.env` file in the project root (copy from `.env.example`):
-
-```bash
-EXPO_PUBLIC_SUPABASE_URL=your-supabase-project-url
-EXPO_PUBLIC_SUPABASE_ANON_KEY=your-supabase-anon-key
-EXPO_PUBLIC_OPENWEATHER_API_KEY=your-openweather-api-key
-EXPO_PUBLIC_GROQ_API_KEY=your-groq-api-key
-```
-
-### Where to get each key
-
-| Variable | Where to get it |
+| Issue | Detail |
 |---|---|
-| `EXPO_PUBLIC_SUPABASE_URL` | Supabase Dashboard → Project Settings → API |
-| `EXPO_PUBLIC_SUPABASE_ANON_KEY` | Supabase Dashboard → Project Settings → API |
-| `EXPO_PUBLIC_OPENWEATHER_API_KEY` | [openweathermap.org/api](https://openweathermap.org/api) — free tier |
-| `EXPO_PUBLIC_GROQ_API_KEY` | [console.groq.com](https://console.groq.com) — free tier |
-
----
-
-## Supabase Setup
-
-Run the SQL migration files **in order** inside your Supabase **SQL Editor**:
-
-```
-001_initial_schema.sql          ← Creates all tables
-002_rls_policies.sql            ← Row Level Security policies
-003_storage_buckets.sql         ← Storage bucket configuration
-004_follow_requests.sql         ← Follow requests table
-005_follows_accept_policy.sql   ← RLS policy for accepting follows
-006_fix_follow_requests_delete.sql
-```
-
-### Storage Buckets
-
-| Bucket | Access | Used For |
-|---|---|---|
-| `post-images` | Public | Feed post photos |
-| `wardrobe-images` | Private (signed URLs, 7-day expiry) | Closet item photos |
-| `avatars` | Public | Profile pictures |
+| **Sessions do not persist across restarts** | [src/supabase.ts:8-14](src/supabase.ts#L8-L14) defines `ExpoSecureStoreAdapter`, but it is backed by an in-memory `Map` — not SecureStore. `expo-secure-store` is installed and configured in `app.json` but never actually used for the session. Users are logged out every time the app is killed. Swapping the `Map` for real `SecureStore` calls fixes it. |
+| **API keys ship inside the app bundle** | All keys are `EXPO_PUBLIC_*`, so the Groq and OpenWeather keys are extractable from a distributed APK. Acceptable for a university project with free-tier keys; not acceptable for a public release. Fixing it properly means a real server or Supabase Edge Functions. |
+| **`outfits` table is unused** | Created in migration 001, no code reads or writes it. |
+| **Today tab can show empty slots** | `suggestOutfit` requires an exact `season` tag match, so a slot stays blank if you own nothing tagged for the current season — even if an `all`-season item would fit. |
 
 ---
 
 ## Building for Android
 
-The project uses **EAS Build** — Expo's cloud build service. No local Android SDK required.
-
-### Step 1 — Login
+Uses **EAS Build** (Expo's cloud builder) — no local Android SDK needed.
 
 ```bash
+npm install -g eas-cli
 eas login
-```
 
-### Step 2 — Preview build (APK — direct install, best for testing)
-
-```bash
+# APK for testers / direct install
 eas build --profile preview --platform android
-```
 
-### Step 3 — Production build (AAB — for Google Play Store)
-
-```bash
+# AAB for Google Play
 eas build --profile production --platform android
 ```
 
-### Build Profiles
-
-| Profile | Output | Use Case |
+| Profile | Output | Use |
 |---|---|---|
 | `development` | Dev client | Local development with hot reload |
-| `preview` | `.apk` | Share with testers / install directly on device |
-| `production` | `.aab` | Submit to Google Play Store |
+| `preview` | `.apk` | Share with testers, install directly |
+| `production` | `.aab` | Google Play submission |
 
-> Builds run on EAS cloud servers (~5–10 minutes). Download links appear at [expo.dev/builds](https://expo.dev/builds).
+Builds take roughly 5–10 minutes; download links appear at [expo.dev/builds](https://expo.dev/builds).
 
 ---
 
 ## License
 
 MIT © [Kaif223](https://github.com/Kaif223)
-
-
-```
-EXPO_PUBLIC_SUPABASE_URL=your-supabase-url
-EXPO_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
-EXPO_PUBLIC_OPENWEATHER_API_KEY=your-openweather-key
-EXPO_PUBLIC_GROQ_API_KEY=your-groq-key
-```
-
-## Project Structure
-
-```
-fitfuse/
-├── app/              # Expo Router screens
-│   ├── (auth)/       # Login, Register
-│   └── (tabs)/       # Main app tabs
-├── src/              # API, Auth, Store
-│   └── store/        # Redux slices
-├── backend/          # Node.js server
-│   └── routes/       # API routes
-└── supabase/         # DB migrations
-```
-
-## License
-MIT

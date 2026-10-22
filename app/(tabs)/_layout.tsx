@@ -1,8 +1,13 @@
 import { Tabs } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Home, Shirt, ScanLine, Users, UserCircle } from 'lucide-react-native';
 import { colors } from '../../src/theme';
 
 export default function TabsLayout() {
+  // Android is edge-to-edge, so pad the tab bar above the system navigation bar
+  const insets = useSafeAreaInsets();
+  const bottomPad = Math.max(insets.bottom, 12);
+
   return (
     <Tabs
       screenOptions={{
@@ -12,9 +17,9 @@ export default function TabsLayout() {
         tabBarStyle: {
           backgroundColor: colors.bg,
           borderTopColor: colors.line,
-          height: 84,
+          height: 60 + bottomPad,
           paddingTop: 8,
-          paddingBottom: 24,
+          paddingBottom: bottomPad,
         },
         tabBarLabelStyle: { fontSize: 10, fontWeight: '500' },
       }}
