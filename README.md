@@ -57,16 +57,16 @@ There are **two separate** outfit engines, and only one uses AI:
 
 | Layer | Technology | Version |
 |---|---|---|
-| Framework | Expo SDK 58 · React Native 0.88 · React 19.3 | ~58.0.0 |
-| Navigation | Expo Router (file-based) | ~58.0.25 |
+| Framework | Expo SDK 57 · React Native 0.86 · React 19.2 | ~57.0.31 |
+| Navigation | Expo Router (file-based) | ~57.0.29 |
 | State | Redux Toolkit + React Redux | ^2.3.0 / ^9.1.2 |
 | Database / Auth | Supabase (PostgreSQL) | ^2.105.1 |
 | File storage | Supabase Storage | — |
 | AI vision | Groq — Llama 4 Scout 17B | — |
 | Weather | OpenWeather API | — |
 | Icons | Lucide React Native | ^1.61.0 (+ react-native-svg) |
-| Camera / Picker | expo-camera, expo-image-picker | ~58.0.x |
-| Filesystem | expo-file-system (`File` API) | ~58.0.10 |
+| Camera / Picker | expo-camera, expo-image-picker | ~57.0.x |
+| Filesystem | expo-file-system (`File` API) | ~57.0.7 |
 | Language | TypeScript | ~6.0.3 |
 
 ---

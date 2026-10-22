@@ -38,7 +38,8 @@
           "photosPermission": "Allow FitFuse to access your photos."
         }
       ],
-      "expo-secure-store"
+      "expo-secure-store",
+      "expo-status-bar"
     ],
     "experiments": {
       "typedRoutes": true
