@@ -263,8 +263,20 @@ export const followsApi = {
 // ============================================================
 // WARDROBE
 // ============================================================
+// wardrobe-images is a private bucket, so the DB stores the storage *path*
+// and a short-lived signed URL is minted on every read. Signed URLs must never
+// be persisted — they expire and the image goes blank.
+const WARDROBE_BUCKET = 'wardrobe-images';
+const WARDROBE_URL_TTL = 60 * 60 * 24; // 24h — items are fetched once per app session
+
+// Older rows stored a full (now expired) signed URL; recover the path from it.
+function wardrobePath(imageUrl: string): string {
+  const match = imageUrl.match(/\/wardrobe-images\/([^?]+)/);
+  return match ? decodeURIComponent(match[1]) : imageUrl;
+}
+
 export const wardrobeApi = {
-  // Fetch all wardrobe items for a user
+  // Fetch all wardrobe items for a user, with fresh signed image URLs
   async getItems(userId: string) {
     const { data, error } = await supabase
       .from('wardrobe_items')
@@ -272,7 +284,21 @@ export const wardrobeApi = {
       .eq('user_id', userId)
       .order('created_at', { ascending: false });
     if (error) throw error;
-    return data;
+
+    const paths = data.filter(i => i.image_url).map(i => wardrobePath(i.image_url));
+    if (paths.length === 0) return data;
+
+    // One request signs every image
+    const { data: signed, error: signError } = await supabase.storage
+      .from(WARDROBE_BUCKET)
+      .createSignedUrls(paths, WARDROBE_URL_TTL);
+    if (signError) throw signError;
+    const urlByPath = new Map(signed.map(s => [s.path, s.signedUrl]));
+
+    return data.map(i => ({
+      ...i,
+      image_url: i.image_url ? urlByPath.get(wardrobePath(i.image_url)) ?? null : null,
+    }));
   },
 
   // Add a new clothing item
@@ -280,18 +306,12 @@ export const wardrobeApi = {
     name: string; type: string; style: string;
     color: string; season: string; imageUri: string;
   }) {
-    const path = await uploadImage('wardrobe-images', userId, item.imageUri);
-    // Use a signed URL (1 week expiry) since wardrobe-images is a private bucket
-    const { data: signedData, error: signedError } = await supabase.storage
-      .from('wardrobe-images')
-      .createSignedUrl(path, 60 * 60 * 24 * 7);
-    if (signedError) throw signedError;
-    const imageUrl = signedData.signedUrl;
+    const path = await uploadImage(WARDROBE_BUCKET, userId, item.imageUri);
     const { data, error } = await supabase
       .from('wardrobe_items')
       .insert({
         user_id: userId,
-        image_url: imageUrl,
+        image_url: path,
         name: item.name,
         type: item.type,
         style: item.style,
@@ -301,7 +321,13 @@ export const wardrobeApi = {
       .select()
       .single();
     if (error) throw error;
-    return data;
+
+    // Return a displayable URL so the new item shows immediately
+    const { data: signed, error: signError } = await supabase.storage
+      .from(WARDROBE_BUCKET)
+      .createSignedUrl(path, WARDROBE_URL_TTL);
+    if (signError) throw signError;
+    return { ...data, image_url: signed.signedUrl };
   },
 
   // Delete a wardrobe item
