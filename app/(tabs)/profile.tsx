@@ -4,7 +4,7 @@ import {
   TextInput, Alert, ActivityIndicator, Image,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { LogOut, Edit2, Users, Shirt, MapPin, Heart, X, Search, UserPlus, UserMinus, Camera, Bell, Check } from 'lucide-react-native';
+import { LogOut, Edit2, Users, Shirt, MapPin, Heart, X, Search, UserPlus, UserMinus, Camera, UserCheck } from 'lucide-react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { useAuth } from '../../src/AuthContext';
 import { profilesApi, wardrobeApi, followsApi } from '../../src/api';
@@ -53,41 +53,6 @@ export default function Profile() {
   const [searching, setSearching]         = useState(false);
   const [showSearch, setShowSearch]       = useState(false);
 
-  // Follow requests inbox
-  const [pendingRequests, setPendingRequests] = useState<any[]>([]);
-  const [requestsLoading, setRequestsLoading] = useState(false);
-
-  const loadPendingRequests = () => {
-    if (!user) return;
-    setRequestsLoading(true);
-    followsApi.getPendingRequests(user.id)
-      .then(setPendingRequests)
-      .catch(() => {})
-      .finally(() => setRequestsLoading(false));
-  };
-
-  const handleAccept = async (fromId: string) => {
-    if (!user) return;
-    try {
-      await followsApi.acceptRequest(fromId, user.id);
-      // Remove from list immediately
-      setPendingRequests(prev => prev.filter(r => r.id !== fromId));
-      // Refresh follower count from DB
-      const newCount = await followsApi.getFollowerCount(user.id);
-      setFollowerCount(newCount);
-    } catch (e: any) {
-      Alert.alert('Could not accept request', e?.message ?? String(e));
-    }
-  };
-
-  const handleDecline = async (fromId: string) => {
-    if (!user) return;
-    try {
-      await followsApi.declineRequest(fromId, user.id);
-      setPendingRequests(prev => prev.filter(r => r.id !== fromId));
-    } catch (e: any) { Alert.alert('Error', e.message); }
-  };
-
   // Load stats on mount
   useEffect(() => {
     if (!user) return;
@@ -97,7 +62,6 @@ export default function Profile() {
     profilesApi.getUserPosts(user.id)
       .then(d => { setMyPosts(d ?? []); setPostsLoading(false); })
       .catch(() => setPostsLoading(false));
-    loadPendingRequests();
   }, [user]);
 
   // Sync form fields when profile loads
@@ -125,7 +89,19 @@ export default function Profile() {
     setSearching(true);
     try {
       const results = await profilesApi.searchUsers(searchQuery.trim());
-      setSearchResults((results ?? []).filter((u: any) => u.id !== user?.id));
+      const filtered = (results ?? []).filter((u: any) => u.id !== user?.id);
+
+      // Pre-populate follow state for each result so the correct button shows
+      const withStatus = await Promise.all(
+        filtered.map(async (u: any) => {
+          const [following, pending] = await Promise.all([
+            followsApi.isFollowing(user!.id, u.id),
+            followsApi.hasPendingRequest(user!.id, u.id),
+          ]);
+          return { ...u, _following: following, _pending: !following && pending };
+        })
+      );
+      setSearchResults(withStatus);
     } catch (e: any) {
       Alert.alert('Error', e.message);
     } finally {
@@ -222,7 +198,7 @@ export default function Profile() {
             <Text style={styles.statLabel}>Followers</Text>
           </View>
           <View style={styles.statBox}>
-            <Heart size={20} color={colors.ink} strokeWidth={1.8} />
+            <UserCheck size={20} color={colors.ink} strokeWidth={1.8} />
             <Text style={styles.statNum}>{followingCount}</Text>
             <Text style={styles.statLabel}>Following</Text>
           </View>
@@ -247,45 +223,6 @@ export default function Profile() {
             {saving ? <ActivityIndicator color="#fff" /> : <Text style={styles.saveBtnText}>Save Changes</Text>}
           </Pressable>
         )}
-
-        {/* Follow Requests Inbox */}
-        <View style={styles.section}>
-          <Pressable style={styles.sectionHeader} onPress={loadPendingRequests}>
-            <Bell size={16} color={colors.inkSoft} strokeWidth={1.8} />
-            <Text style={styles.sectionTitle}>Follow Requests</Text>
-            {pendingRequests.length > 0 && (
-              <View style={styles.badge}><Text style={styles.badgeText}>{pendingRequests.length}</Text></View>
-            )}
-          </Pressable>
-          {requestsLoading ? (
-            <ActivityIndicator color={colors.ink} style={{ marginTop: 8 }} />
-          ) : pendingRequests.length === 0 ? (
-            <Text style={{ color: colors.inkSoft, fontSize: 13, marginTop: 4 }}>No pending requests</Text>
-          ) : (
-            pendingRequests.map(req => (
-              <View key={req.id} style={styles.userRow}>
-                <View style={styles.userAvatar}>
-                  {req.avatar_url
-                    ? <Image source={{ uri: req.avatar_url }} style={{ width: 44, height: 44, borderRadius: 22 }} />
-                    : <Text style={{ fontWeight: '600' }}>{(req.name ?? '?')[0].toUpperCase()}</Text>
-                  }
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.userName}>{req.name}</Text>
-                  <Text style={styles.userSub}>{req.bio ?? 'Wants to follow you'}</Text>
-                </View>
-                <View style={{ flexDirection: 'row', gap: 8 }}>
-                  <Pressable onPress={() => handleAccept(req.id)} style={styles.acceptBtn}>
-                    <Check size={15} color="#fff" strokeWidth={2.5} />
-                  </Pressable>
-                  <Pressable onPress={() => handleDecline(req.id)} style={styles.declineBtn}>
-                    <X size={15} color={colors.ink} strokeWidth={2.5} />
-                  </Pressable>
-                </View>
-              </View>
-            ))
-          )}
-        </View>
 
         {/* Find People */}
         <View style={styles.section}>
@@ -317,13 +254,27 @@ export default function Profile() {
                     <Text style={styles.userName}>{u.name}</Text>
                     <Text style={styles.userSub}>{u.bio ?? 'No bio'}</Text>
                   </View>
-                  <Pressable onPress={() => handleFollow(u.id)} style={styles.followBtn}>
-                    {u._following
-                      ? <UserMinus size={16} color={colors.ink} strokeWidth={1.8} />
-                      : u._pending
-                        ? <X size={16} color={colors.inkSoft} strokeWidth={1.8} />
-                        : <UserPlus size={16} color={colors.ink} strokeWidth={1.8} />
-                    }
+                  <Pressable onPress={() => handleFollow(u.id)} style={[
+                    styles.followBtn,
+                    u._following && styles.followBtnActive,
+                    u._pending && styles.followBtnPending,
+                  ]}>
+                    {u._following ? (
+                      <>
+                        <UserMinus size={14} color={colors.white} strokeWidth={1.8} />
+                        <Text style={styles.followBtnText}>Unfollow</Text>
+                      </>
+                    ) : u._pending ? (
+                      <>
+                        <X size={14} color={colors.inkSoft} strokeWidth={1.8} />
+                        <Text style={[styles.followBtnText, { color: colors.inkSoft }]}>Pending</Text>
+                      </>
+                    ) : (
+                      <>
+                        <UserPlus size={14} color={colors.ink} strokeWidth={1.8} />
+                        <Text style={[styles.followBtnText, { color: colors.ink }]}>Follow</Text>
+                      </>
+                    )}
                   </Pressable>
                 </View>
               ))}
@@ -332,7 +283,7 @@ export default function Profile() {
         </View>
 
         {/* My Posts */}
-        <View style={[styles.section, { padding: 0, overflow: 'hidden' }]}>
+        {/* <View style={[styles.section, { padding: 0, overflow: 'hidden' }]}>
           <View style={[styles.sectionHeader, { padding: 16 }]}>
             <Text style={styles.sectionTitle}>My Posts</Text>
           </View>
@@ -347,7 +298,7 @@ export default function Profile() {
               ))}
             </View>
           )}
-        </View>
+        </View> */}
 
       </ScrollView>
     </SafeAreaView>
@@ -386,7 +337,10 @@ const styles = StyleSheet.create({
   userAvatar: { width: 44, height: 44, borderRadius: 22, backgroundColor: colors.bg, alignItems: 'center', justifyContent: 'center' },
   userName: { fontSize: 15, fontWeight: '600', color: colors.ink },
   userSub: { fontSize: 12, color: colors.inkSoft },
-  followBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: colors.bg, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: colors.line },
+  followBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 12, paddingVertical: 8, borderRadius: radius.full, backgroundColor: colors.bg, borderWidth: 1, borderColor: colors.line },
+  followBtnActive: { backgroundColor: '#EF4444', borderColor: '#EF4444' },
+  followBtnPending: { backgroundColor: colors.surface, borderColor: colors.line },
+  followBtnText: { fontSize: 12, fontWeight: '600', color: colors.white },
   postsGrid: { flexDirection: 'row', flexWrap: 'wrap' },
   postThumb: { width: '33.33%', aspectRatio: 1 },
   badge: { minWidth: 18, height: 18, borderRadius: 9, backgroundColor: '#EF4444', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 5, marginLeft: 6 },

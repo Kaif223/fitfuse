@@ -1,7 +1,8 @@
 import { supabase, uploadImage, getPublicUrl } from './supabase';
 
 const OPENWEATHER_KEY = process.env.EXPO_PUBLIC_OPENWEATHER_API_KEY;
-const GEMINI_KEY = process.env.EXPO_PUBLIC_GEMINI_API_KEY;
+const GROQ_KEY = process.env.EXPO_PUBLIC_GROQ_API_KEY;
+const GROQ_VISION_MODEL = 'qwen/qwen3.8-27b';
 
 // ============================================================
 // FEED / POSTS
@@ -263,20 +264,26 @@ export const followsApi = {
 // ============================================================
 // WARDROBE
 // ============================================================
-// wardrobe-images is a private bucket, so the DB stores the storage *path*
-// and a short-lived signed URL is minted on every read. Signed URLs must never
-// be persisted — they expire and the image goes blank.
 const WARDROBE_BUCKET = 'wardrobe-images';
-const WARDROBE_URL_TTL = 60 * 60 * 24; // 24h — items are fetched once per app session
+const WARDROBE_URL_TTL = 60 * 60 * 24; // 24h — the closet is fetched once per app session
 
-// Older rows stored a full (now expired) signed URL; recover the path from it.
-function wardrobePath(imageUrl: string): string {
-  const match = imageUrl.match(/\/wardrobe-images\/([^?]+)/);
-  return match ? decodeURIComponent(match[1]) : imageUrl;
+// The wardrobe-images bucket is PRIVATE, so images need a signed URL to load.
+// We store the storage PATH in the DB (never a signed URL — those expire) and
+// mint a fresh signed URL on every fetch. This also handles legacy rows that
+// stored a full signed URL: we recover the path from the URL before re-signing.
+function storagePathFromStored(stored: string | null): string | null {
+  if (!stored) return null;
+  // Already a bare path (new rows): "userId/123.jpg"
+  if (!stored.startsWith('http')) return stored;
+  // Legacy full URL: .../object/(sign|public)/wardrobe-images/<path>?token=...
+  const marker = `/${WARDROBE_BUCKET}/`;
+  const idx = stored.indexOf(marker);
+  if (idx === -1) return null;
+  return stored.slice(idx + marker.length).split('?')[0];
 }
 
 export const wardrobeApi = {
-  // Fetch all wardrobe items for a user, with fresh signed image URLs
+  // Fetch all wardrobe items for a user, attaching a fresh signed image URL.
   async getItems(userId: string) {
     const { data, error } = await supabase
       .from('wardrobe_items')
@@ -284,24 +291,27 @@ export const wardrobeApi = {
       .eq('user_id', userId)
       .order('created_at', { ascending: false });
     if (error) throw error;
+    if (!data || data.length === 0) return data;
 
-    const paths = data.filter(i => i.image_url).map(i => wardrobePath(i.image_url));
-    if (paths.length === 0) return data;
-
-    // One request signs every image
-    const { data: signed, error: signError } = await supabase.storage
-      .from(WARDROBE_BUCKET)
-      .createSignedUrls(paths, WARDROBE_URL_TTL);
-    if (signError) throw signError;
-    const urlByPath = new Map(signed.map(s => [s.path, s.signedUrl]));
-
-    return data.map(i => ({
-      ...i,
-      image_url: i.image_url ? urlByPath.get(wardrobePath(i.image_url)) ?? null : null,
-    }));
+    // Build a fresh signed URL for each item's storage path (batch request).
+    const paths = data.map((i: any) => storagePathFromStored(i.image_url));
+    const valid = paths.filter((p): p is string => !!p);
+    const signedByPath: Record<string, string> = {};
+    if (valid.length > 0) {
+      const { data: signed } = await supabase.storage
+        .from(WARDROBE_BUCKET)
+        .createSignedUrls(valid, WARDROBE_URL_TTL); // regenerated each fetch
+      signed?.forEach((s) => {
+        if (s.signedUrl && s.path) signedByPath[s.path] = s.signedUrl;
+      });
+    }
+    return data.map((item: any, idx: number) => {
+      const path = paths[idx];
+      return { ...item, image_url: path ? signedByPath[path] ?? null : null };
+    });
   },
 
-  // Add a new clothing item
+  // Add a new clothing item. Stores the storage PATH (not a signed URL).
   async addItem(userId: string, item: {
     name: string; type: string; style: string;
     color: string; season: string; imageUri: string;
@@ -321,13 +331,11 @@ export const wardrobeApi = {
       .select()
       .single();
     if (error) throw error;
-
-    // Return a displayable URL so the new item shows immediately
-    const { data: signed, error: signError } = await supabase.storage
+    // Return with a usable signed URL so the UI can show it immediately.
+    const { data: signed } = await supabase.storage
       .from(WARDROBE_BUCKET)
       .createSignedUrl(path, WARDROBE_URL_TTL);
-    if (signError) throw signError;
-    return { ...data, image_url: signed.signedUrl };
+    return { ...data, image_url: signed?.signedUrl ?? null };
   },
 
   // Delete a wardrobe item
@@ -414,13 +422,13 @@ export const recommendApi = {
     // Decide which seasons are relevant for this temperature
     let preferredSeasons: string[];
     let tempLabel: string;
-    if (tempC < 15) {
+    if (tempC < 12) {
       preferredSeasons = ['winter'];
       tempLabel = `very cold (${Math.round(tempC)}°C) — heavy winter outfit`;
-    } else if (tempC < 25) {
+    } else if (tempC < 20) {
       preferredSeasons = ['autumn'];
       tempLabel = `cool (${Math.round(tempC)}°C) — light layers outfit`;
-    } else if (tempC < 30) {
+    } else if (tempC < 26) {
       preferredSeasons = ['spring'];
       tempLabel = `warm (${Math.round(tempC)}°C) — warm weather outfit`;
     } else {
@@ -453,43 +461,168 @@ export const recommendApi = {
     };
   },
 
-  // Analyze a scanned outfit photo and match with wardrobe
-  async analyzeOutfitPhoto(base64Image: string, wardrobeItems: any[]) {
-    const prompt = `You are a fashion AI. Analyze this outfit photo and match it with the user's wardrobe items.
+  // Analyze a scanned outfit photo — detect human, extract style, suggest wardrobe combo
+  // Optionally pass city to factor in live weather when picking wardrobe items
+  async analyzeOutfitPhoto(base64Image: string, wardrobeItems: any[], city?: string) {
+    // ── Fetch live weather if city is provided ──────────────
+    let weatherContext = '';
+    let weatherLabel = '';
+    if (city) {
+      try {
+        const weatherData = await this.getWeather(city);
+        const tempC: number = weatherData.main?.temp ?? 20;
+        const condition: string = weatherData.weather?.[0]?.description ?? '';
 
-User's wardrobe:
-${wardrobeItems.map(i => `- ${i.name} (${i.type}, ${i.color}, ${i.style})`).join('\n')}
-
-Return a JSON object with:
-{
-  "analysis": "What you see in the photo",
-  "matches": [
-    { "name": "item name", "type": "type", "color": "color", "reason": "why it matches" }
-  ]
-}`;
-
-    const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_KEY}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{
-            parts: [
-              { text: prompt },
-              { inline_data: { mime_type: 'image/jpeg', data: base64Image } },
-            ],
-          }],
-        }),
+        if (tempC < 12) {
+          weatherLabel = `winter (${Math.round(tempC)}°C, ${condition})`;
+          weatherContext = `The current weather in ${city} is VERY COLD at ${Math.round(tempC)}°C (${condition}). Prioritise warm, heavy items — winter coats, thick shirts, heavy pants, boots. Avoid light summer clothing.`;
+        } else if (tempC < 20) {
+          weatherLabel = `autumn (${Math.round(tempC)}°C, ${condition})`;
+          weatherContext = `The current weather in ${city} is COOL at ${Math.round(tempC)}°C (${condition}). Prefer layered outfits — light jackets, long-sleeve shirts, full pants.`;
+        } else if (tempC < 26) {
+          weatherLabel = `spring (${Math.round(tempC)}°C, ${condition})`;
+          weatherContext = `The current weather in ${city} is WARM at ${Math.round(tempC)}°C (${condition}). Suggest comfortable spring outfits — light shirts, chinos, sneakers.`;
+        } else {
+          weatherLabel = `summer (${Math.round(tempC)}°C, ${condition})`;
+          weatherContext = `The current weather in ${city} is HOT at ${Math.round(tempC)}°C (${condition}). Suggest light, breathable summer clothing — t-shirts, light pants or shorts, sandals or light sneakers.`;
+        }
+      } catch {
+        // Weather fetch failed — continue without it
       }
-    );
+    }
+
+    // Include the season tag of each wardrobe item so AI can match weather
+    const wardrobeList = wardrobeItems.map(i =>
+      `- id:${i.id} | ${i.name} | type:${i.type} | color:${i.color} | style:${i.style} | season:${i.season ?? 'all'}`
+    ).join('\n');
+
+    const weatherSection = weatherContext
+      ? `\nWEATHER CONTEXT (very important):\n${weatherContext}\nYou MUST prefer items whose season tag matches the current weather (season:"${weatherLabel.split(' ')[0]}" or season:"all"). Do NOT suggest heavy winter clothing in hot weather or light summer clothing in cold weather.\n`
+      : '';
+
+    const prompt = `You are a fashion AI assistant. Analyze the image and respond with ONLY a valid JSON object — no markdown, no code fences, no explanation.
+
+TASK 1 — Detect if a human is present:
+Return "human_detected": true if the image shows ANY of:
+- A real person wearing clothes (photo from a laptop screen, mirror selfie, etc. all count)
+- A fashion model, mannequin, or any human-like figure in clothing
+- Clothes clearly being worn by a human body (even partially visible)
+
+Return "human_detected": false ONLY if the image has NO person at all (e.g. food, car, landscape, blank object).
+When in doubt, return true.
+
+TASK 2 — If human detected, analyze the outfit style:
+- detected_style: the clothing vibe (casual, formal, sporty, traditional, streetwear)
+- detected_occasion: best occasion (daily wear, office, party, gym)
+- style_summary: one sentence describing the outfit
+${weatherSection}
+TASK 3 — If human detected, pick the best outfit from this wardrobe list:
+${wardrobeList.length > 0 ? wardrobeList : '(wardrobe is empty — set all suggestion fields to null)'}
+
+Pick ONE shirt/top, ONE pants/bottom, ONE shoes. Use ONLY items from the list above by their id.
+
+RESPOND WITH EXACTLY ONE OF THESE TWO JSON FORMATS:
+
+If NO human detected:
+{"human_detected":false}
+
+If human IS detected:
+{"human_detected":true,"detected_style":"...","detected_occasion":"...","style_summary":"...","weather_label":"${weatherLabel || 'not available'}","suggestion":{"shirt":{"id":"...","name":"...","color":"..."},"pants":{"id":"...","name":"...","color":"..."},"shoes":{"id":"...","name":"...","color":"..."}}}
+
+Rules:
+- Output ONLY the JSON. No markdown, no backticks, no extra text.
+- If a wardrobe slot has no matching item, set all its fields to null.`;
+
+    // Strip data URL prefix if present (e.g. "data:image/jpeg;base64,...")
+    // Groq vision expects a full data URL, so reconstruct it cleanly
+    let mimeType = 'image/jpeg';
+    if (base64Image.startsWith('data:image/png')) mimeType = 'image/png';
+    else if (base64Image.startsWith('data:image/webp')) mimeType = 'image/webp';
+
+    const cleanBase64 = base64Image.includes(',') ? base64Image.split(',')[1] : base64Image;
+    const dataUrl = `data:${mimeType};base64,${cleanBase64}`;
+
+    // ── Groq Vision API (OpenAI-compatible, free tier) ──────
+    // Groq retires models without notice (llama-4-scout is gone) — check
+    // https://console.groq.com/docs/models and update GROQ_VISION_MODEL if Scan breaks.
+    const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${GROQ_KEY}`,
+      },
+      body: JSON.stringify({
+        model: GROQ_VISION_MODEL,
+        temperature: 0.2,
+        // The JSON reply is ~150 tokens. Without a cap Groq reserves 2048, which
+        // exceeds the free tier's 1000 output-tokens/minute and fails the request.
+        max_tokens: 500,
+        response_format: { type: 'json_object' },
+        messages: [
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'image_url',
+                image_url: { url: dataUrl },
+              },
+              {
+                type: 'text',
+                text: prompt,
+              },
+            ],
+          },
+        ],
+      }),
+    });
+
+    if (!res.ok) {
+      const errBody = await res.text().catch(() => res.statusText);
+      throw new Error(`Groq API error ${res.status}: ${errBody}`);
+    }
+
     const data = await res.json();
-    const text = data.candidates?.[0]?.content?.parts?.[0]?.text ?? '{}';
+
+    // Surface API-level errors
+    if (data.error) {
+      throw new Error(`Groq error: ${data.error.message ?? JSON.stringify(data.error)}`);
+    }
+
+    const text: string = data.choices?.[0]?.message?.content ?? '';
+
+    if (!text) {
+      const reason = data.choices?.[0]?.finish_reason ?? 'unknown';
+      throw new Error(`Groq returned no content (finish_reason: ${reason})`);
+    }
+
     try {
-      const jsonMatch = text.match(/\{[\s\S]*\}/);
-      return jsonMatch ? JSON.parse(jsonMatch[0]) : { analysis: text, matches: [] };
+      // Strip reasoning blocks and markdown code fences in case the model adds them
+      const cleaned = text.replace(/<think>[\s\S]*?<\/think>/gi, '').trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+      const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) return { human_detected: false };
+
+      const parsed = JSON.parse(jsonMatch[0]);
+
+      // The AI only knows id/name/color — look up the real image_url from
+      // the wardrobe items so the SlotCard can display the actual photo.
+      if (parsed.human_detected && parsed.suggestion) {
+        const byId: Record<string, any> = {};
+        wardrobeItems.forEach((i: any) => { byId[i.id] = i; });
+
+        const enrich = (slot: any) => {
+          if (!slot || !slot.id) return slot;
+          const match = byId[slot.id];
+          return match ? { ...slot, image_url: match.image_url ?? null } : slot;
+        };
+
+        parsed.suggestion.shirt = enrich(parsed.suggestion.shirt);
+        parsed.suggestion.pants = enrich(parsed.suggestion.pants);
+        parsed.suggestion.shoes = enrich(parsed.suggestion.shoes);
+      }
+
+      return parsed;
     } catch {
-      return { analysis: text, matches: [] };
+      throw new Error(`Could not parse Groq response: ${text.slice(0, 200)}`);
     }
   },
 };

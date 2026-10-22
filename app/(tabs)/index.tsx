@@ -1,10 +1,10 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, ScrollView, Pressable, StyleSheet, ActivityIndicator, Image } from 'react-native';
-import { Bell, Sun, Cloud, CloudRain, MapPin, Sparkles, RefreshCw } from 'lucide-react-native';
+import { View, Text, ScrollView, Pressable, StyleSheet, ActivityIndicator, Image, Modal } from 'react-native';
+import { Bell, Sun, Cloud, CloudRain, MapPin, Sparkles, RefreshCw, Check, X } from 'lucide-react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { colors, radius } from '../../src/theme';
 import { useAuth } from '../../src/AuthContext';
-import { wardrobeApi, recommendApi } from '../../src/api';
+import { wardrobeApi, recommendApi, followsApi } from '../../src/api';
 
 interface WeatherData {
   temp: number;
@@ -28,8 +28,19 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(false);
   const [wardrobeCount, setWardrobeCount] = useState(0);
 
+  // Follow requests
+  const [pendingRequests, setPendingRequests] = useState<any[]>([]);
+  const [showRequests, setShowRequests] = useState(false);
+
   const name = profile?.name?.split(' ')[0] ?? 'there';
   const today = new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' }).toUpperCase();
+
+  const getGreeting = () => {
+    const h = new Date().getHours();
+    if (h < 12) return 'Good morning,';
+    if (h < 17) return 'Good afternoon,';
+    return 'Good evening,';
+  };
 
   const loadData = async () => {
     if (!user) return;
@@ -79,6 +90,13 @@ export default function Dashboard() {
     if (user) loadData();
   }, [user, profile?.city]);
 
+  useEffect(() => {
+    if (!user) return;
+    followsApi.getPendingRequests(user.id)
+      .then(setPendingRequests)
+      .catch(() => {});
+  }, [user]);
+
   const WeatherIcon = () => {
     const c = weather?.condition?.toLowerCase() || '';
     if (c.includes('rain')) return <CloudRain size={22} color={colors.ink} strokeWidth={1.6} />;
@@ -93,13 +111,64 @@ export default function Dashboard() {
         <View style={styles.headerRow}>
           <View>
             <Text style={styles.kicker}>{today}</Text>
-            <Text style={styles.h1}>Good morning,</Text>
+            <Text style={styles.h1}>{getGreeting()}</Text>
             <Text style={[styles.h1, styles.italic]}>{name}</Text>
           </View>
-          <Pressable style={styles.iconBtn} onPress={loadData}>
+          <Pressable style={styles.iconBtn} onPress={() => setShowRequests(true)}>
             <Bell size={18} color={colors.ink} strokeWidth={1.6} />
+            {pendingRequests.length > 0 && (
+              <View style={styles.badge}>
+                <Text style={styles.badgeText}>{pendingRequests.length}</Text>
+              </View>
+            )}
           </Pressable>
         </View>
+
+        {/* Follow Requests Modal */}
+        <Modal visible={showRequests} animationType="slide" transparent onRequestClose={() => setShowRequests(false)}>
+          <View style={styles.modalOverlay}>
+            <View style={styles.modalSheet}>
+              <View style={styles.modalHeader}>
+                <Text style={styles.modalTitle}>Follow Requests</Text>
+                <Pressable onPress={() => setShowRequests(false)}>
+                  <X size={20} color={colors.ink} strokeWidth={1.6} />
+                </Pressable>
+              </View>
+              {pendingRequests.length === 0 ? (
+                <Text style={styles.emptyText}>No pending requests</Text>
+              ) : (
+                pendingRequests.map((req) => (
+                  <View key={req.id} style={styles.requestRow}>
+                    {req.avatar_url ? (
+                      <Image source={{ uri: req.avatar_url }} style={styles.reqAvatar} />
+                    ) : (
+                      <View style={[styles.reqAvatar, { backgroundColor: colors.warm, alignItems: 'center', justifyContent: 'center' }]}>
+                        <Text style={{ fontSize: 16 }}>👤</Text>
+                      </View>
+                    )}
+                    <Text style={styles.reqName}>{req.name ?? 'Someone'}</Text>
+                    <View style={{ flexDirection: 'row', gap: 8 }}>
+                      <Pressable style={styles.acceptBtn} onPress={async () => {
+                        if (!user) return;
+                        await followsApi.acceptRequest(req.id, user.id).catch(() => {});
+                        setPendingRequests(prev => prev.filter(r => r.id !== req.id));
+                      }}>
+                        <Check size={14} color={colors.white} strokeWidth={2} />
+                      </Pressable>
+                      <Pressable style={styles.declineBtn} onPress={async () => {
+                        if (!user) return;
+                        await followsApi.declineRequest(req.id, user.id).catch(() => {});
+                        setPendingRequests(prev => prev.filter(r => r.id !== req.id));
+                      }}>
+                        <X size={14} color={colors.ink} strokeWidth={2} />
+                      </Pressable>
+                    </View>
+                  </View>
+                ))
+              )}
+            </View>
+          </View>
+        </Modal>
 
         {/* Weather Card */}
         {weather && (
@@ -233,4 +302,16 @@ const styles = StyleSheet.create({
   ghostBtnText: { fontSize: 14, fontWeight: '500', color: colors.ink },
   stat: { flex: 1, backgroundColor: colors.surface, borderRadius: radius.md, paddingHorizontal: 16, paddingVertical: 12 },
   statV: { fontSize: 20, color: colors.ink, fontWeight: '500', marginBottom: 4 },
+  badge: { position: 'absolute', top: 6, right: 6, width: 16, height: 16, borderRadius: 8, backgroundColor: '#EF4444', alignItems: 'center', justifyContent: 'center' },
+  badgeText: { fontSize: 9, color: '#fff', fontWeight: '700' },
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.35)', justifyContent: 'flex-end' },
+  modalSheet: { backgroundColor: colors.bg, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24, paddingBottom: 40, minHeight: 200 },
+  modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 },
+  modalTitle: { fontSize: 18, fontWeight: '600', color: colors.ink },
+  emptyText: { fontSize: 14, color: colors.inkSoft, textAlign: 'center', marginTop: 16 },
+  requestRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: colors.line },
+  reqAvatar: { width: 40, height: 40, borderRadius: 20 },
+  reqName: { flex: 1, fontSize: 14, fontWeight: '500', color: colors.ink },
+  acceptBtn: { width: 32, height: 32, borderRadius: 16, backgroundColor: colors.ink, alignItems: 'center', justifyContent: 'center' },
+  declineBtn: { width: 32, height: 32, borderRadius: 16, backgroundColor: colors.surface, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: colors.line },
 });

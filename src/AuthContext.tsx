@@ -58,15 +58,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (_event, session) => {
+      (_event, session) => {
         setSession(session);
         setUser(session?.user ?? null);
+        setLoading(false);
+        // IMPORTANT: do NOT call other awaited supabase methods directly here.
+        // The callback runs while supabase holds its internal auth lock; calling
+        // supabase.from()/getSession() inside it deadlocks signIn/signUp on web.
+        // Defer the profile fetch so the lock is released first.
         if (session?.user) {
-          await fetchProfile(session.user.id);
+          const userId = session.user.id;
+          setTimeout(() => { fetchProfile(userId); }, 0);
         } else {
           setProfile(null);
         }
-        setLoading(false);
       }
     );
 

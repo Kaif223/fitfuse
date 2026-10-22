@@ -189,7 +189,7 @@ export default function Feed() {
       {/* Hide tabs while searching */}
       {!showSearch && (
         <View style={styles.tabs}>
-          {['For You', 'Following', 'Trending'].map(tab => (
+          {['For You', 'Following'/* , 'Trending' */].map(tab => (
             <Pressable key={tab} onPress={() => setActiveTab(tab)}>
               <Text style={[styles.tab, activeTab === tab && styles.tabActive]}>{tab}</Text>
             </Pressable>
@@ -249,7 +249,7 @@ export default function Feed() {
                         <Text style={styles.actionText}>{p.comment_count ?? 0}</Text>
                       </Pressable>
                     </View>
-                    <Pressable><Bookmark size={20} color={colors.ink} strokeWidth={1.6} /></Pressable>
+                    {/* <Pressable><Bookmark size={20} color={colors.ink} strokeWidth={1.6} /></Pressable> */}
                   </View>
 
                   {p.caption ? (
