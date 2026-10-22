@@ -2,7 +2,7 @@
 
 A smart wardrobe and social outfit app built with **React Native + Expo**. Catalogue your clothes, get outfit suggestions based on live weather, scan an outfit photo for AI-matched suggestions from your own closet, and share looks with the people you follow.
 
-> **Architecture note:** FitFuse is a **serverless / backend-less app**. The Expo client talks directly to Supabase (Postgres + Auth + Storage), with row-level security enforcing access control. The `backend/` folder is **legacy code from an earlier Firebase-based version and is not used or wired up** — see [Backend folder status](#backend-folder--status-not-in-use).
+> **Architecture note:** FitFuse is a **serverless / backend-less app**. The Expo client talks directly to Supabase (Postgres + Auth + Storage), with row-level security enforcing access control.
 
 ---
 
@@ -17,7 +17,6 @@ A smart wardrobe and social outfit app built with **React Native + Expo**. Catal
 - [Supabase Setup](#supabase-setup)
 - [Database Schema](#database-schema)
 - [API Modules](#api-modules)
-- [Backend folder — status (not in use)](#backend-folder--status-not-in-use)
 - [Known Issues & Cleanup](#known-issues--cleanup)
 - [Building for Android](#building-for-android)
 - [License](#license)
@@ -132,7 +131,6 @@ fitfuse/
 │   ├── 005_follows_accept_policy.sql
 │   └── 006_fix_follow_requests_delete.sql
 │
-├── backend/                    # ⚠️ LEGACY — not used by the app, see below
 ├── assets/fitfuse_logo.png
 ├── app.json                    # Expo config (permissions, plugins, EAS project id)
 ├── eas.json                    # EAS Build profiles
@@ -257,37 +255,6 @@ Everything lives in [src/api.ts](src/api.ts), grouped by domain:
 
 ---
 
-## Backend folder — status: NOT IN USE
-
-`backend/` is a leftover Express + Firebase + Gemini server from an earlier version of this project, before it was migrated to Supabase. **It is dead code.** The app does not import it, call it, or depend on it in any way, and deleting the folder would not change app behaviour.
-
-### Verified findings
-
-| # | Finding | Evidence |
-|---|---|---|
-| 1 | **Nothing calls it.** No `API_URL`, no `localhost:3001`, no fetch to any `/api/*` route anywhere in `app/` or `src/`. | `grep -rn "localhost:3001\|/api/" app src` → no matches |
-| 2 | **It cannot start.** Dependencies were never installed; there is no `backend/node_modules`. | `node server.js` → `Error: Cannot find module 'express'` |
-| 3 | **Wrong stack.** Backend is Firebase/Firestore + Google Gemini; the app is Supabase/Postgres + Groq. Two unrelated data layers. | `routes/*.js` use `db.collection(...)`; `src/api.ts` uses `supabase.from(...)` |
-| 4 | **Config drift.** `backend/.env.example` documents `CLAUDE_API_KEY` and `package.json` depends on `@anthropic-ai/sdk`, but the code actually reads `process.env.GEMINI_API_KEY` and imports `@google/generative-ai`. Following the example file produces a non-working config. | [backend/routes/outfit.js:4-7](backend/routes/outfit.js#L4-L7) vs [backend/.env.example](backend/.env.example) |
-| 5 | **Incompatible schema.** Backend expects Firestore `wardrobe` docs with `name`/`category`/`color`/`wornCount` and `posts` with a `likes` **array**. The app uses `wardrobe_items` with `type`/`style`/`season` and a separate `likes` **table**. | `routes/wardrobe.js`, `routes/feed.js` |
-| 6 | **No authentication on any route.** Every endpoint trusts a `userId` sent in the request body or URL. `firebase-admin` is imported but no ID token is ever verified — so if this were deployed as-is, anyone could read, add or delete any user's wardrobe items. | `routes/wardrobe.js`, `routes/users.js`, `routes/feed.js` |
-| 7 | **Failures are silent.** `firebase-admin.js` catches init errors and sets `db = null`; routes then return `[]` or `503` instead of surfacing the real problem. | [backend/firebase-admin.js:17-24](backend/firebase-admin.js#L17-L24) |
-| 8 | Syntax itself is valid — `node --check` passes on all six files. The folder is stale, not corrupt. | — |
-
-### What to do about it
-
-Pick one — the first is recommended for a clean submission:
-
-1. **Delete it.** `git rm -r backend/ SETUP.md` — nothing in the app breaks. The project is intentionally backend-less.
-2. **Keep it as documented history.** Leave it in place; this README already marks it as unused.
-3. **Revive it** (only if a server is genuinely required — e.g. to stop shipping API keys to the client). That means: rewriting the routes against Supabase instead of Firestore, adding real token verification, and pointing `src/api.ts` at it. This is a rewrite, not a fix.
-
-> ⚠️ **Security:** `backend/serviceAccountKey.json` contains a **live Firebase private key**, and `backend/.env` holds real API keys. Both are correctly listed in `.gitignore`, and `git log --all` confirms neither was ever committed. Still — since the backend is unused, **revoke that service-account key** in the Firebase Console rather than leaving it sitting on disk.
-
-`SETUP.md` in the repo root is from the same era. It tells you to configure Firebase and edit `src/firebase.ts` — **a file that does not exist**. Ignore it; this README supersedes it.
-
----
-
 ## Known Issues & Cleanup
 
 Honest list of things worth knowing before you build on this:
@@ -297,8 +264,6 @@ Honest list of things worth knowing before you build on this:
 | **Sessions do not persist across restarts** | [src/supabase.ts:8-14](src/supabase.ts#L8-L14) defines `ExpoSecureStoreAdapter`, but it is backed by an in-memory `Map` — not SecureStore. `expo-secure-store` is installed and configured in `app.json` but never actually used for the session. Users are logged out every time the app is killed. Swapping the `Map` for real `SecureStore` calls fixes it. |
 | **API keys ship inside the app bundle** | All keys are `EXPO_PUBLIC_*`, so the Groq and OpenWeather keys are extractable from a distributed APK. Acceptable for a university project with free-tier keys; not acceptable for a public release. Fixing it properly means a real server or Supabase Edge Functions. |
 | **`outfits` table is unused** | Created in migration 001, no code reads or writes it. |
-| **Stray files in the repo root** | `item.id}` (empty, 0 bytes — an accidental shell redirect), `write_feed.py`, `write_screens.py`, `fix_profile.sh`, `install_redux.sh`. The scripts are one-off code generators that hardcode an old `/home/kaif/Downloads/fitfuse-complete` path and no longer apply. Safe to delete. |
-| **`SETUP.md` is stale** | Describes the abandoned Firebase architecture. See the backend section above. |
 | **Today tab can show empty slots** | `suggestOutfit` requires an exact `season` tag match, so a slot stays blank if you own nothing tagged for the current season — even if an `all`-season item would fit. |
 
 ---
